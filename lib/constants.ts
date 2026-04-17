@@ -1,5 +1,5 @@
 export const DOWNLOADS = {
-  android: "https://github.com/joaohenriquefsp/DioupeCamDesktop/releases/download/v1.0.0/DioupeCam.apk",
+  android: "https://github.com/joaohenriquefsp/DioupeCamApp-/releases/download/v1.0.0/DioupeCam.apk",
   windows: "https://github.com/joaohenriquefsp/DioupeCamDesktop/releases/download/v1.0.0/DioupeCamDesktop-Setup.exe",
 }
 
