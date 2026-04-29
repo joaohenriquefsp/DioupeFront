@@ -40,7 +40,7 @@ export const CHARACTERS: CharacterConfig[] = [
   },
   {
     id: "deco",
-    name: "Deco",
+    name: "Dan",
     color: 0xf97316,
     hp: 160,
     speed: 170,
