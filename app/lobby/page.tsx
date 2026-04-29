@@ -30,7 +30,7 @@ export default function LobbyPage() {
   const handleJoin = () => {
     if (!joinCode.trim()) return
     const name = nickname.trim() || "Player"
-    router.push(`/room/${joinCode.trim().toUpperCase()}?nickname=${encodeURIComponent(name)}`)
+    router.push(`/room/${joinCode.trim()}?nickname=${encodeURIComponent(name)}`)
   }
 
   const handleCreateRoom = () => {
@@ -302,7 +302,7 @@ export default function LobbyPage() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   <input
                     value={joinCode}
-                    onChange={(e) => setJoinCode(e.target.value.toUpperCase().slice(0, 26))}
+                    onChange={(e) => setJoinCode(e.target.value.slice(0, 26))}
                     placeholder="CÓDIGO DA SALA"
                     style={{
                       width: "100%",
