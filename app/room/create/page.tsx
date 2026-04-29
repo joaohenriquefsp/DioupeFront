@@ -16,24 +16,10 @@ export default function CreateRoomPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
 
-  const handleCreate = async () => {
+  const handleCreate = () => {
     const name = nickname.trim() || "Player"
-    setLoading(true)
-    setError("")
-    try {
-      const room = await createPrivateRoom(name, selectedMap)
-      // Salva room no sessionStorage para a página de sala acessar
-      sessionStorage.setItem("colyseusRoom", JSON.stringify({
-        roomId: room.roomId,
-        sessionId: room.sessionId,
-        nickname: name,
-        isHost: true,
-      }))
-      router.push(`/room/${room.roomId}?nickname=${encodeURIComponent(name)}`)
-    } catch (e) {
-      setError("Servidor offline. Verifique se o servidor está rodando.")
-      setLoading(false)
-    }
+    // Apenas redireciona — a conexão é criada em /room/[code]
+    router.push(`/room/new?nickname=${encodeURIComponent(name)}&map=${selectedMap}`)
   }
 
   return (

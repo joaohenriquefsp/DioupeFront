@@ -22,7 +22,9 @@ export default function RoomPage() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const roomCode = params.code as string
-  const nickname = searchParams.get("nickname") ?? "Player"
+  const nickname  = searchParams.get("nickname") ?? "Player"
+  const mapId     = searchParams.get("map") ?? "praca-cine"
+  const isNew     = roomCode === "new"
 
   const roomRef = useRef<Room | null>(null)
   const [players, setPlayers] = useState<PlayerInfo[]>([])
@@ -40,7 +42,14 @@ export default function RoomPage() {
 
     const connect = async () => {
       try {
-        room = await joinPrivateRoom(roomCode, nickname)
+        room = isNew
+          ? await createPrivateRoom(nickname, mapId)
+          : await joinPrivateRoom(roomCode, nickname)
+
+        // Atualiza a URL com o roomId real (sem reload)
+        if (isNew) {
+          window.history.replaceState(null, "", `/room/${room.roomId}?nickname=${encodeURIComponent(nickname)}`)
+        }
         roomRef.current = room
         setConnecting(false)
 
