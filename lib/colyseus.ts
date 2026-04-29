@@ -19,6 +19,20 @@ export async function joinPrivateRoom(roomId: string, nickname: string): Promise
   return client.joinById(roomId, { nickname })
 }
 
+export async function findRoomByCode(code: string): Promise<string | null> {
+  try {
+    const base = SERVER_URL.replace("ws://", "http://").replace("wss://", "https://")
+    const res = await fetch(`${base}/find/${encodeURIComponent(code.toUpperCase())}`, {
+      signal: AbortSignal.timeout(3000),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return data.roomId ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function checkServerOnline(): Promise<boolean> {
   try {
     const base = SERVER_URL.replace("ws://", "http://").replace("wss://", "https://")

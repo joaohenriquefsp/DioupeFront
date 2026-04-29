@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import RosterSelect from "@/components/roster/RosterSelect"
-import { checkServerOnline } from "@/lib/colyseus"
+import { checkServerOnline, findRoomByCode } from "@/lib/colyseus"
 
 const t = (delay = 0) =>
   ({ duration: 0.5, ease: [0.25, 0.1, 0.25, 1], delay }) as const
@@ -14,6 +14,7 @@ export default function LobbyPage() {
   const [selectedChar, setSelectedChar] = useState("dioupe")
   const [nickname, setNickname] = useState("")
   const [joinCode, setJoinCode] = useState("")
+  const [joinError, setJoinError] = useState("")
   const [tab, setTab] = useState<"play" | "join">("play")
   const [serverOnline, setServerOnline] = useState<boolean | null>(null)
 
@@ -27,10 +28,16 @@ export default function LobbyPage() {
     router.push(`/game?${params.toString()}`)
   }
 
-  const handleJoin = () => {
+  const handleJoin = async () => {
     if (!joinCode.trim()) return
+    setJoinError("")
     const name = nickname.trim() || "Player"
-    router.push(`/room/${joinCode.trim()}?nickname=${encodeURIComponent(name)}`)
+    const realRoomId = await findRoomByCode(joinCode.trim())
+    if (!realRoomId) {
+      setJoinError("Sala não encontrada. Verifique o código.")
+      return
+    }
+    router.push(`/room/${realRoomId}?nickname=${encodeURIComponent(name)}`)
   }
 
   const handleCreateRoom = () => {
@@ -302,7 +309,7 @@ export default function LobbyPage() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   <input
                     value={joinCode}
-                    onChange={(e) => setJoinCode(e.target.value.slice(0, 26))}
+                    onChange={(e) => { setJoinCode(e.target.value.slice(0, 26)); setJoinError("") }}
                     placeholder="CÓDIGO DA SALA"
                     style={{
                       width: "100%",
@@ -318,10 +325,16 @@ export default function LobbyPage() {
                       outline: "none",
                       fontFamily: "monospace",
                       boxSizing: "border-box",
+                      textTransform: "uppercase",
                     }}
                     onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(14,165,233,0.4)")}
                     onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(14,165,233,0.12)")}
                   />
+                  {joinError && (
+                    <span style={{ color: "#f87171", fontSize: 12, textAlign: "center" }}>
+                      {joinError}
+                    </span>
+                  )}
                   <ActionButton onClick={handleJoin} accent disabled={!serverOnline || !joinCode.trim()}>
                     {serverOnline ? "Entrar na Sala" : "Servidor offline"}
                   </ActionButton>
