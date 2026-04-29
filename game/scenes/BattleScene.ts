@@ -438,13 +438,15 @@ export class BattleScene extends Phaser.Scene {
 
     this.isAttacking = true
     this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
-    this.player.setFlipX(false)
+    this.player.setFlipX(this.facingLeft) // attack2 tem sprite único — flipa para esquerda
     this.player.play(`${pfx}-attack2`)
     this.time.delayedCall(ATTACK_POINT_MS, () => {
       if (this.isAttacking) this.applyAttackDamage()
     })
     this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
       this.isAttacking = false
+      this.player.setFlipX(!this.facingLeft)
+      this.player.play(`${pfx}-idle`)
     })
   }
 
@@ -460,40 +462,27 @@ export class BattleScene extends Phaser.Scene {
         const atkAnim = this.facingLeft ? `${pfx}-attack-left` : `${pfx}-attack-right`
         const hasAnim = this.anims.exists(atkAnim)
 
+        this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
+        this.player.setFlipX(false)
+
         if (hasAnim) {
-          // Limpa listeners órfãos de ataques anteriores cancelados
-          this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
-          this.player.setFlipX(false)
           this.player.play(atkAnim)
-          this.time.delayedCall(ATTACK_POINT_MS, () => {
-            if (!this.isAttacking) return
-            this.applyAttackDamage()
-          })
-          this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
-            this.isAttacking = false
-          })
         } else {
-          // Ataque sem sprite ainda — efeito visual temporário
-          this.player.setTint(0xfbbf24)
-          this.tweens.add({
-            targets: this.player,
-            scaleX: this.characterId === "dioupe" ? 0.75 : 1.2,
-            scaleY: this.characterId === "dioupe" ? 0.55 : 0.9,
-            duration: 80,
-            yoyo: true,
-            onComplete: () => {
-              this.player.clearTint()
-              if (this.characterId === "dioupe") this.player.setScale(0.9)
-            }
-          })
-          this.time.delayedCall(ATTACK_POINT_MS, () => {
-            if (!this.isAttacking) return
-            this.applyAttackDamage()
-          })
-          this.time.delayedCall(300, () => {
-            this.isAttacking = false
-          })
+          // Fallback: usa idle como placeholder se sprite não carregou
+          this.player.play(`${pfx}-idle`)
         }
+
+        this.time.delayedCall(ATTACK_POINT_MS, () => {
+          if (!this.isAttacking) return
+          this.applyAttackDamage()
+        })
+
+        this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+          this.isAttacking = false
+          // Força idle explicitamente para evitar frame vazio
+          this.player.setFlipX(!this.facingLeft)
+          this.player.play(`${pfx}-idle`)
+        })
       }
 
       if (needsTurn) {
