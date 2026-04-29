@@ -29,6 +29,7 @@ export default function RoomPage() {
 
   const roomRef        = useRef<Room | null>(null)
   const navigatingRef  = useRef(false)
+  const [actualRoomId, setActualRoomId] = useState(isNew ? "" : roomCode)
   const [players, setPlayers] = useState<PlayerInfo[]>([])
   const [mySessionId, setMySessionId] = useState("")
   const [isHost, setIsHost] = useState(false)
@@ -50,6 +51,7 @@ export default function RoomPage() {
 
         // Atualiza a URL com o roomId real (sem reload)
         if (isNew) {
+          setActualRoomId(room.roomId)
           window.history.replaceState(null, "", `/room/${room.roomId}?nickname=${encodeURIComponent(nickname)}`)
         }
         roomRef.current = room
@@ -149,12 +151,12 @@ export default function RoomPage() {
               Sala Privada
             </div>
             <div style={{ fontSize: 22, fontWeight: 900, color: "var(--text-primary)", fontFamily: "monospace", letterSpacing: "0.06em" }}>
-              {roomCode}
+              {actualRoomId || "Conectando..."}
             </div>
           </div>
           <button
             onClick={() => {
-              navigator.clipboard.writeText(roomCode)
+              navigator.clipboard.writeText(actualRoomId)
             }}
             style={{
               padding: "8px 14px", borderRadius: 8,
