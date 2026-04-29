@@ -4,7 +4,8 @@ import { useEffect, useState, useRef } from "react"
 import { useParams, useSearchParams, useRouter } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
 import { Room } from "colyseus.js"
-import { joinPrivateRoom } from "@/lib/colyseus"
+import { joinPrivateRoom, createPrivateRoom } from "@/lib/colyseus"
+import { setActiveRoom } from "@/lib/gameRoom"
 import { CHARACTERS } from "@/game/config/characters"
 
 const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`
@@ -26,7 +27,8 @@ export default function RoomPage() {
   const mapId     = searchParams.get("map") ?? "praca-cine"
   const isNew     = roomCode === "new"
 
-  const roomRef = useRef<Room | null>(null)
+  const roomRef        = useRef<Room | null>(null)
+  const navigatingRef  = useRef(false)
   const [players, setPlayers] = useState<PlayerInfo[]>([])
   const [mySessionId, setMySessionId] = useState("")
   const [isHost, setIsHost] = useState(false)
@@ -73,16 +75,11 @@ export default function RoomPage() {
         })
 
         room.onMessage("gameStart", (data: { mapId: string }) => {
-          const stored = sessionStorage.getItem("colyseusRoom")
-          const info = stored ? JSON.parse(stored) : {}
-          sessionStorage.setItem("colyseusRoom", JSON.stringify({
-            ...info,
-            roomId: roomCode,
-            sessionId: room.sessionId,
-            nickname,
-            mapId: data.mapId,
-          }))
-          router.push(`/game?character=${selectedCharRef.current}&nickname=${encodeURIComponent(nickname)}&online=true&room=${roomCode}`)
+          // Preserva a conexão ao navegar para o jogo
+          navigatingRef.current = true
+          setActiveRoom(room)
+          const char = selectedCharRef.current
+          router.push(`/game?character=${char}&nickname=${encodeURIComponent(nickname)}&online=true`)
         })
 
         room.onMessage("newHost", (data: { id: string }) => {
@@ -110,7 +107,8 @@ export default function RoomPage() {
     connect()
 
     return () => {
-      room?.leave()
+      // Não sai da sala se está indo para o jogo
+      if (!navigatingRef.current) room?.leave()
     }
   }, [roomCode, nickname])
 

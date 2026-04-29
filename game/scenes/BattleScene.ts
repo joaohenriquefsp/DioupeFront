@@ -1,5 +1,6 @@
 import * as Phaser from "phaser"
 import { CHARACTERS, getCharacter } from "../config/characters"
+import { getActiveRoom, clearActiveRoom } from "../../lib/gameRoom"
 
 const SPEED = 200
 const JUMP_VY = -500
@@ -79,17 +80,27 @@ export class BattleScene extends Phaser.Scene {
   private bots: Bot[] = []
   private onHUDUpdate?: (data: HUDData) => void
   private projectiles!: Phaser.Physics.Arcade.Group
+  private online = false
+  private remotePlayer?: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody
+  private remoteNameLabel?: Phaser.GameObjects.Text
+  private remoteHPBar?: Phaser.GameObjects.Graphics
+  private remoteHPBarBg?: Phaser.GameObjects.Graphics
+  private remoteHP = 100
+  private remoteMaxHP = 100
+  private remoteDead = false
+  private syncTimer = 0
 
   constructor() {
     super({ key: "BattleScene" })
   }
 
-  init(data: { characterId?: string; nickname?: string; onHUDUpdate?: (d: HUDData) => void }) {
+  init(data: { characterId?: string; nickname?: string; online?: boolean; onHUDUpdate?: (d: HUDData) => void }) {
     this.characterId = data.characterId ?? "dioupe"
-    this.nickname = data.nickname ?? "Player"
+    this.nickname    = data.nickname ?? "Player"
+    this.online      = data.online ?? false
     this.onHUDUpdate = data.onHUDUpdate
-    this.bots = []
-    this.shielded = false
+    this.bots        = []
+    this.shielded    = false
   }
 
   preload() {
@@ -212,8 +223,8 @@ export class BattleScene extends Phaser.Scene {
 
     this.projectiles = this.physics.add.group()
 
-    // Bots
-    this.spawnBots(W, H)
+    // Bots (apenas no modo solo)
+    if (!this.online) this.spawnBots(W, H)
 
     this.cursors = this.input.keyboard!.createCursorKeys()
     this.keyA = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A)
@@ -224,7 +235,122 @@ export class BattleScene extends Phaser.Scene {
     this.keyK = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.K)
     this.keyL = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.L)
 
+    if (this.online) this.setupOnline(W, H)
+
     this.emitHUD()
+  }
+
+  private syncOnline(delta: number) {
+    const room = getActiveRoom()
+    if (!room) return
+
+    this.syncTimer += delta
+    if (this.syncTimer >= 50) {  // 20fps
+      this.syncTimer = 0
+      room.send("position", { x: this.player.x, y: this.player.y })
+      room.send("move", {
+        vx: this.player.body.velocity.x,
+        vy: this.player.body.velocity.y
+      })
+    }
+  }
+
+  private drawRemoteHP() {
+    if (!this.remotePlayer || !this.remoteHPBar || !this.remoteHPBarBg) return
+    const barW = 40, barH = 4
+    const x = this.remotePlayer.x - barW / 2
+    const y = this.remotePlayer.y - 50
+
+    this.remoteHPBarBg.clear()
+    this.remoteHPBarBg.fillStyle(0x1a1a2e)
+    this.remoteHPBarBg.fillRect(x, y, barW, barH)
+
+    const pct = Math.max(0, this.remoteHP / this.remoteMaxHP)
+    const color = pct > 0.5 ? 0x22c55e : pct > 0.25 ? 0xf97316 : 0xef4444
+    this.remoteHPBar.clear()
+    this.remoteHPBar.fillStyle(color)
+    this.remoteHPBar.fillRect(x, y, barW * pct, barH)
+  }
+
+  private setupOnline(W: number, H: number) {
+    const room = getActiveRoom()
+    if (!room) return
+
+    const myId = room.sessionId
+
+    // Cria sprite do adversário
+    this.remotePlayer = this.physics.add.sprite(W / 2 + 100, H - 120, "char-dioupe")
+    this.remotePlayer.setCollideWorldBounds(true)
+    this.remotePlayer.body.setGravityY(GRAVITY_EXTRA)
+    this.remotePlayer.setDepth(10)
+    this.remotePlayer.setVisible(false)
+
+    this.remoteNameLabel = this.add.text(0, 0, "", {
+      fontSize: "11px", color: "#f0f4ff", fontFamily: "monospace"
+    }).setOrigin(0.5).setDepth(11).setVisible(false)
+
+    this.remoteHPBarBg = this.add.graphics().setDepth(12)
+    this.remoteHPBar   = this.add.graphics().setDepth(13)
+
+    this.physics.add.collider(this.remotePlayer, this.platforms)
+
+    // Recebe estado do servidor
+    room.onStateChange((state: any) => {
+      state.players.forEach((player: any, sessionId: string) => {
+        if (sessionId === myId) {
+          // Atualiza HP local
+          if (player.hp !== this.hp) {
+            this.hp = player.hp
+            this.emitHUD()
+          }
+          return
+        }
+
+        // Adversário
+        if (!this.remotePlayer) return
+        this.remotePlayer.setVisible(true)
+        this.remoteNameLabel?.setVisible(true)
+
+        // Lerp de posição para suavizar
+        const tx = Phaser.Math.Linear(this.remotePlayer.x, player.x, 0.3)
+        const ty = Phaser.Math.Linear(this.remotePlayer.y, player.y, 0.3)
+        this.remotePlayer.setPosition(tx, ty)
+        this.remotePlayer.setFlipX(!player.facingRight)
+
+        this.remoteNameLabel?.setPosition(tx, ty - 40)
+        this.remoteNameLabel?.setText(player.nickname)
+
+        this.remoteHP    = player.hp
+        this.remoteMaxHP = player.maxHp
+        this.remoteDead  = !player.alive
+
+        if (!player.alive && !this.remoteDead) {
+          this.tweens.add({
+            targets: [this.remotePlayer, this.remoteNameLabel],
+            alpha: 0, duration: 500
+          })
+        }
+      })
+    })
+
+    // Adversário eliminado
+    room.onMessage("playerEliminated", (data: { id: string; nickname: string }) => {
+      if (data.id !== myId) {
+        // Você ganhou
+        this.time.delayedCall(800, () => {
+          clearActiveRoom()
+          this.scene.start("ResultScene", { winner: this.nickname, characterId: this.characterId })
+        })
+      }
+    })
+
+    // Fim de jogo
+    room.onMessage("gameOver", (data: { winner: string; characterId: string }) => {
+      clearActiveRoom()
+      this.time.delayedCall(800, () => {
+        this.scene.start("ResultScene", { winner: data.winner, characterId: data.characterId })
+      })
+    })
   }
 
   private spawnBots(W: number, H: number) {
@@ -374,7 +500,11 @@ export class BattleScene extends Phaser.Scene {
     }
     if (this.abilityCooldown > 0) this.emitHUD()
 
-    this.updateBots(delta)
+    if (!this.online) this.updateBots(delta)
+    if (this.online) this.syncOnline(delta)
+
+    // HP bar do remoto
+    if (this.online && this.remotePlayer?.visible) this.drawRemoteHP()
   }
 
   private updateBots(delta: number) {
@@ -475,11 +605,11 @@ export class BattleScene extends Phaser.Scene {
         this.time.delayedCall(ATTACK_POINT_MS, () => {
           if (!this.isAttacking) return
           this.applyAttackDamage()
+          if (this.online) getActiveRoom()?.send("attack", { type: "basic" })
         })
 
         this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
           this.isAttacking = false
-          // Força idle explicitamente para evitar frame vazio
           this.player.setFlipX(!this.facingLeft)
           this.player.play(`${pfx}-idle`)
         })

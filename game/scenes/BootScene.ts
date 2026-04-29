@@ -10,7 +10,7 @@ export class BootScene extends Phaser.Scene {
   preload() {}
 
   create() {
-    const { characterId, nickname, onHUDUpdate } = getGameInitData()
+    const { characterId, nickname, onHUDUpdate, online } = getGameInitData()
 
     const makeGfx = () => this.make.graphics({})
 
@@ -46,6 +46,6 @@ export class BootScene extends Phaser.Scene {
       hit.destroy()
     }
 
-    this.scene.start("BattleScene", { characterId, nickname, onHUDUpdate })
+    this.scene.start("BattleScene", { characterId, nickname, onHUDUpdate, online })
   }
 }

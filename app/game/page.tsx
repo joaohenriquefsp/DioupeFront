@@ -19,7 +19,8 @@ function GameView() {
   const params = useSearchParams()
   const router = useRouter()
   const characterId = params.get("character") ?? "dioupe"
-  const nickname = params.get("nickname") ?? "Player"
+  const nickname    = params.get("nickname") ?? "Player"
+  const online      = params.get("online") === "true"
 
   const char = getCharacter(characterId)
   const [hudState, setHUDState] = useState<HUDState>({
@@ -83,6 +84,7 @@ function GameView() {
         <GameCanvas
           characterId={characterId}
           nickname={nickname}
+          online={online}
           onHUDUpdate={handleHUDUpdate}
         />
       </div>

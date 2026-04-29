@@ -7,6 +7,7 @@ interface GameOptions {
   parent: HTMLElement
   characterId?: string
   nickname?: string
+  online?: boolean
   onHUDUpdate?: (data: {
     hp: number
     maxHp: number
@@ -19,8 +20,9 @@ interface GameOptions {
 let _gameInitData: {
   characterId: string
   nickname: string
+  online: boolean
   onHUDUpdate?: GameOptions["onHUDUpdate"]
-} = { characterId: "dioupe", nickname: "Player" }
+} = { characterId: "dioupe", nickname: "Player", online: false }
 
 export function getGameInitData() {
   return _gameInitData
@@ -29,7 +31,8 @@ export function getGameInitData() {
 export function createPhaserGame(options: GameOptions): Phaser.Game {
   const { parent, characterId = "dioupe", nickname = "Player", onHUDUpdate } = options
 
-  _gameInitData = { characterId, nickname, onHUDUpdate }
+  const online = options.online ?? false
+  _gameInitData = { characterId, nickname, onHUDUpdate, online }
 
   const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,

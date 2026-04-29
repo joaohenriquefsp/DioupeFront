@@ -12,10 +12,11 @@ interface HUDData {
 interface GameCanvasProps {
   characterId: string
   nickname: string
+  online?: boolean
   onHUDUpdate?: (data: HUDData) => void
 }
 
-export default function GameCanvas({ characterId, nickname, onHUDUpdate }: GameCanvasProps) {
+export default function GameCanvas({ characterId, nickname, online = false, onHUDUpdate }: GameCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const gameRef = useRef<unknown>(null)
   const [ready, setReady] = useState(false)
@@ -35,6 +36,7 @@ export default function GameCanvas({ characterId, nickname, onHUDUpdate }: GameC
         parent: containerRef.current,
         characterId,
         nickname,
+        online,
         onHUDUpdate,
       })
 
