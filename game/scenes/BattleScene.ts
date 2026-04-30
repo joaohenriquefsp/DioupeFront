@@ -274,13 +274,31 @@ export class BattleScene extends Phaser.Scene {
     this.remoteHPBar.fillRect(x, y, barW * pct, barH)
   }
 
+  private applyRemoteCharacter(characterId: string) {
+    if (!this.remotePlayer) return
+    this.remoteCharacterId = characterId
+    const isDioupe = characterId === "dioupe"
+    const isBW     = characterId === "boletas-wolf"
+    const tex      = isDioupe ? "dioupe-idle" : isBW ? "bw-idle" : `char-${characterId}`
+    this.remotePlayer.setTexture(tex)
+    if (isDioupe || isBW) {
+      this.remotePlayer.setScale(0.75)
+      this.remotePlayer.body.setSize(55, 100)
+      this.remotePlayer.body.setOffset(37, 20)
+      this.remotePlayer.play(isDioupe ? "dioupe-idle" : "bw-idle")
+    } else {
+      this.remotePlayer.setScale(1)
+      this.remotePlayer.body.setSize(32, 48)
+      this.remotePlayer.body.setOffset(0, 0)
+    }
+  }
+
   private setupOnline(W: number, H: number) {
     const room = getActiveRoom()
     if (!room) return
 
     const myId = room.sessionId
 
-    // Cria sprite do adversário (placeholder até saber o characterId)
     this.remotePlayer = this.physics.add.sprite(W / 2 + 100, H - 120, "char-dioupe")
     this.remotePlayer.setCollideWorldBounds(true)
     this.remotePlayer.body.setGravityY(GRAVITY_EXTRA)
@@ -297,54 +315,41 @@ export class BattleScene extends Phaser.Scene {
 
     this.physics.add.collider(this.remotePlayer, this.platforms)
 
-    // Recebe estado do servidor
+    // Aplica textura do adversário uma única vez lendo o estado atual
+    const initState = (room as any).state
+    if (initState?.players) {
+      initState.players.forEach((player: any, sessionId: string) => {
+        if (sessionId !== myId && player.characterId) {
+          this.applyRemoteCharacter(player.characterId)
+          this.remotePlayer!.setPosition(player.x || W / 2 + 100, player.y || H - 120)
+          this.remotePlayer!.setVisible(true)
+          this.remoteNameLabel?.setVisible(true)
+          this.remoteNameLabel?.setText(player.nickname || "")
+          this.remoteHP    = player.hp    || 100
+          this.remoteMaxHP = player.maxHp || 100
+        }
+      })
+    }
+
+    // Recebe estado do servidor — apenas posição e HP
     room.onStateChange((state: any) => {
       state.players.forEach((player: any, sessionId: string) => {
         if (sessionId === myId) {
-          // Atualiza HP local
-          if (player.hp !== this.hp) {
-            this.hp = player.hp
-            this.emitHUD()
-          }
+          if (player.hp !== this.hp) { this.hp = player.hp; this.emitHUD() }
           return
         }
 
-        // Adversário
         if (!this.remotePlayer) return
-        this.remotePlayer.setVisible(true)
-        this.remoteNameLabel?.setVisible(true)
 
-        // Atualiza sprite quando o characterId do adversário é conhecido/muda
+        if (!this.remotePlayer.visible) {
+          this.remotePlayer.setVisible(true)
+          this.remoteNameLabel?.setVisible(true)
+        }
+
         if (player.characterId && player.characterId !== this.remoteCharacterId) {
-          this.remoteCharacterId = player.characterId
-          const rIsDioupe = player.characterId === "dioupe"
-          const rIsBW     = player.characterId === "boletas-wolf"
-          const rTex      = rIsDioupe ? "dioupe-idle" : rIsBW ? "bw-idle" : `char-${player.characterId}`
-          this.remotePlayer.setTexture(rTex)
-          if (rIsDioupe || rIsBW) {
-            this.remotePlayer.setScale(0.75)
-            this.remotePlayer.body.setSize(55, 100).setOffset(37, 20)
-            this.remotePlayer.play(rIsDioupe ? "dioupe-idle" : "bw-idle")
-          } else {
-            this.remotePlayer.setScale(1)
-            this.remotePlayer.body.setSize(32, 32).setOffset(0, 0)
-          }
+          this.applyRemoteCharacter(player.characterId)
         }
 
-        // Animação de movimento do adversário (dioupe / bw)
-        const rIsDioupe2 = this.remoteCharacterId === "dioupe"
-        const rIsBW2     = this.remoteCharacterId === "boletas-wolf"
-        if (rIsDioupe2 || rIsBW2) {
-          const pfx = rIsDioupe2 ? "dioupe" : "bw"
-          if (Math.abs(player.vx) > 10) {
-            const walkAnim = player.facingRight ? `${pfx}-walk-right` : `${pfx}-walk-left`
-            if (this.remotePlayer.anims.currentAnim?.key !== walkAnim) this.remotePlayer.play(walkAnim)
-          } else {
-            if (this.remotePlayer.anims.currentAnim?.key !== `${pfx}-idle`) this.remotePlayer.play(`${pfx}-idle`)
-          }
-        }
-
-        // Lerp de posição para suavizar
         const tx = Phaser.Math.Linear(this.remotePlayer.x, player.x, 0.3)
         const ty = Phaser.Math.Linear(this.remotePlayer.y, player.y, 0.3)
         this.remotePlayer.setPosition(tx, ty)
@@ -534,10 +539,28 @@ export class BattleScene extends Phaser.Scene {
     if (this.abilityCooldown > 0) this.emitHUD()
 
     if (!this.online) this.updateBots(delta)
-    if (this.online) this.syncOnline(delta)
+    if (this.online) {
+      this.syncOnline(delta)
+      this.updateRemoteAnim()
+    }
 
     // HP bar do remoto
     if (this.online && this.remotePlayer?.visible) this.drawRemoteHP()
+  }
+
+  private updateRemoteAnim() {
+    if (!this.remotePlayer?.visible) return
+    const isDioupe = this.remoteCharacterId === "dioupe"
+    const isBW     = this.remoteCharacterId === "boletas-wolf"
+    if (!isDioupe && !isBW) return
+    const pfx = isDioupe ? "dioupe" : "bw"
+    const vx  = (this.remotePlayer.body as Phaser.Physics.Arcade.Body).velocity.x
+    if (Math.abs(vx) > 10) {
+      const walkAnim = !this.remotePlayer.flipX ? `${pfx}-walk-right` : `${pfx}-walk-left`
+      if (this.remotePlayer.anims.currentAnim?.key !== walkAnim) this.remotePlayer.play(walkAnim)
+    } else {
+      if (this.remotePlayer.anims.currentAnim?.key !== `${pfx}-idle`) this.remotePlayer.play(`${pfx}-idle`)
+    }
   }
 
   private updateBots(delta: number) {

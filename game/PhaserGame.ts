@@ -50,6 +50,7 @@ export function createPhaserGame(options: GameOptions): Phaser.Game {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
     },
+    disableVisibilityChange: true,
   }
 
   return new Phaser.Game(config)
