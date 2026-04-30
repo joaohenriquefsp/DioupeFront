@@ -11,6 +11,7 @@ const ATTACK_DAMAGE = 20
 const ATTACK_COOLDOWN = 400
 const BOT_SPEED = 110
 const GRAVITY_EXTRA = 700
+const SHOW_ATTACK_FX = process.env.NODE_ENV === "development"
 
 // Combat mechanics (Dota-style)
 const TURN_DELAY = 180           // ms to turn before attacking opposite direction
@@ -88,6 +89,7 @@ export class BattleScene extends Phaser.Scene {
   private remoteHP = 100
   private remoteMaxHP = 100
   private remoteDead = false
+  private remoteCharacterId = ""
   private syncTimer = 0
 
   constructor() {
@@ -278,12 +280,13 @@ export class BattleScene extends Phaser.Scene {
 
     const myId = room.sessionId
 
-    // Cria sprite do adversário
+    // Cria sprite do adversário (placeholder até saber o characterId)
     this.remotePlayer = this.physics.add.sprite(W / 2 + 100, H - 120, "char-dioupe")
     this.remotePlayer.setCollideWorldBounds(true)
     this.remotePlayer.body.setGravityY(GRAVITY_EXTRA)
     this.remotePlayer.setDepth(10)
     this.remotePlayer.setVisible(false)
+    this.remoteCharacterId = ""
 
     this.remoteNameLabel = this.add.text(0, 0, "", {
       fontSize: "11px", color: "#f0f4ff", fontFamily: "monospace"
@@ -310,6 +313,36 @@ export class BattleScene extends Phaser.Scene {
         if (!this.remotePlayer) return
         this.remotePlayer.setVisible(true)
         this.remoteNameLabel?.setVisible(true)
+
+        // Atualiza sprite quando o characterId do adversário é conhecido/muda
+        if (player.characterId && player.characterId !== this.remoteCharacterId) {
+          this.remoteCharacterId = player.characterId
+          const rIsDioupe = player.characterId === "dioupe"
+          const rIsBW     = player.characterId === "boletas-wolf"
+          const rTex      = rIsDioupe ? "dioupe-idle" : rIsBW ? "bw-idle" : `char-${player.characterId}`
+          this.remotePlayer.setTexture(rTex)
+          if (rIsDioupe || rIsBW) {
+            this.remotePlayer.setScale(0.75)
+            this.remotePlayer.body.setSize(55, 100).setOffset(37, 20)
+            this.remotePlayer.play(rIsDioupe ? "dioupe-idle" : "bw-idle")
+          } else {
+            this.remotePlayer.setScale(1)
+            this.remotePlayer.body.setSize(32, 32).setOffset(0, 0)
+          }
+        }
+
+        // Animação de movimento do adversário (dioupe / bw)
+        const rIsDioupe2 = this.remoteCharacterId === "dioupe"
+        const rIsBW2     = this.remoteCharacterId === "boletas-wolf"
+        if (rIsDioupe2 || rIsBW2) {
+          const pfx = rIsDioupe2 ? "dioupe" : "bw"
+          if (Math.abs(player.vx) > 10) {
+            const walkAnim = player.facingRight ? `${pfx}-walk-right` : `${pfx}-walk-left`
+            if (this.remotePlayer.anims.currentAnim?.key !== walkAnim) this.remotePlayer.play(walkAnim)
+          } else {
+            if (this.remotePlayer.anims.currentAnim?.key !== `${pfx}-idle`) this.remotePlayer.play(`${pfx}-idle`)
+          }
+        }
 
         // Lerp de posição para suavizar
         const tx = Phaser.Math.Linear(this.remotePlayer.x, player.x, 0.3)
@@ -568,15 +601,15 @@ export class BattleScene extends Phaser.Scene {
 
     this.isAttacking = true
     this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
-    this.player.setFlipX(this.facingLeft) // attack2 tem sprite único — flipa para esquerda
     this.player.play(`${pfx}-attack2`)
+    this.player.setFlipX(this.facingLeft)
     this.time.delayedCall(ATTACK_POINT_MS, () => {
       if (this.isAttacking) this.applyAttackDamage()
     })
     this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
       this.isAttacking = false
-      this.player.setFlipX(!this.facingLeft)
       this.player.play(`${pfx}-idle`)
+      this.player.setFlipX(!this.facingLeft)
     })
   }
 
@@ -593,14 +626,13 @@ export class BattleScene extends Phaser.Scene {
         const hasAnim = this.anims.exists(atkAnim)
 
         this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
-        this.player.setFlipX(false)
 
         if (hasAnim) {
           this.player.play(atkAnim)
         } else {
-          // Fallback: usa idle como placeholder se sprite não carregou
           this.player.play(`${pfx}-idle`)
         }
+        this.player.setFlipX(false)
 
         this.time.delayedCall(ATTACK_POINT_MS, () => {
           if (!this.isAttacking) return
@@ -610,8 +642,8 @@ export class BattleScene extends Phaser.Scene {
 
         this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
           this.isAttacking = false
-          this.player.setFlipX(!this.facingLeft)
           this.player.play(`${pfx}-idle`)
+          this.player.setFlipX(!this.facingLeft)
         })
       }
 
@@ -628,13 +660,15 @@ export class BattleScene extends Phaser.Scene {
       this.time.delayedCall(80, () => this.player.clearTint())
     }
 
-    // Slash visual (imediato, independente do attack point)
-    const dir = (this.characterId === "dioupe" ? this.facingLeft : this.player.flipX) ? -1 : 1
-    const slash = this.add.graphics()
-    slash.lineStyle(3, 0xf0f4ff, 0.9)
-    slash.strokeEllipse(this.player.x + dir * 40, this.player.y, 60, 30)
-    slash.setDepth(15)
-    this.time.delayedCall(150, () => slash.destroy())
+    // Slash visual (dev only)
+    if (SHOW_ATTACK_FX) {
+      const dir = (this.characterId === "dioupe" ? this.facingLeft : this.player.flipX) ? -1 : 1
+      const slash = this.add.graphics()
+      slash.lineStyle(3, 0xf0f4ff, 0.9)
+      slash.strokeEllipse(this.player.x + dir * 40, this.player.y, 60, 30)
+      slash.setDepth(15)
+      this.time.delayedCall(150, () => slash.destroy())
+    }
 
     // Para personagens sem sprite animado o dano é imediato
     if (this.characterId !== "dioupe") {
@@ -648,12 +682,14 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private applyAttackDamage() {
-    const dir = this.facingLeft ? -1 : 1
-    const slash = this.add.graphics()
-    slash.lineStyle(4, 0xfbbf24, 1)
-    slash.strokeEllipse(this.player.x + dir * 45, this.player.y, 70, 35)
-    slash.setDepth(15)
-    this.time.delayedCall(120, () => slash.destroy())
+    if (SHOW_ATTACK_FX) {
+      const dir = this.facingLeft ? -1 : 1
+      const slash = this.add.graphics()
+      slash.lineStyle(4, 0xfbbf24, 1)
+      slash.strokeEllipse(this.player.x + dir * 45, this.player.y, 70, 35)
+      slash.setDepth(15)
+      this.time.delayedCall(120, () => slash.destroy())
+    }
 
     for (const bot of this.bots) {
       if (!bot.alive) continue
@@ -831,7 +867,7 @@ export class BattleScene extends Phaser.Scene {
         this.time.delayedCall(200, () => this.player.clearTint())
         break
       }
-      case "marcos": {
+      case "deco": {
         this.shielded = true
         this.player.setTint(0xf97316)
         this.time.delayedCall(3000, () => {
