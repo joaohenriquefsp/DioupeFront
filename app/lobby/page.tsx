@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import RosterSelect from "@/components/roster/RosterSelect"
-import { checkServerOnline, findRoomByCode } from "@/lib/colyseus"
+import { checkServerOnline } from "@/lib/colyseus"
 
 const t = (delay = 0) =>
   ({ duration: 0.5, ease: [0.25, 0.1, 0.25, 1], delay }) as const
@@ -28,16 +28,11 @@ export default function LobbyPage() {
     router.push(`/game?${params.toString()}`)
   }
 
-  const handleJoin = async () => {
+  const handleJoin = () => {
     if (!joinCode.trim()) return
     setJoinError("")
     const name = nickname.trim() || "Player"
-    const realRoomId = await findRoomByCode(joinCode.trim())
-    if (!realRoomId) {
-      setJoinError("Sala não encontrada. Verifique o código.")
-      return
-    }
-    router.push(`/room/${realRoomId}?nickname=${encodeURIComponent(name)}`)
+    router.push(`/room/${joinCode.trim()}?nickname=${encodeURIComponent(name)}`)
   }
 
   const handleCreateRoom = () => {
