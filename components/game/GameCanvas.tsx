@@ -52,7 +52,7 @@ export default function GameCanvas({ characterId, nickname, online = false, onHU
         gameRef.current = null
       }
     }
-  }, [characterId, nickname, onHUDUpdate])
+  }, [characterId, nickname, online, onHUDUpdate])
 
   return (
     <div

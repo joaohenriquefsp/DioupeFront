@@ -84,7 +84,7 @@ export class BattleScene extends Phaser.Scene {
   private onHUDUpdate?: (data: HUDData) => void
   private projectiles!: Phaser.Physics.Arcade.Group
   private online = false
-  private remotePlayer?: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody
+  private remotePlayer?: Phaser.GameObjects.Sprite
   private remoteNameLabel?: Phaser.GameObjects.Text
   private remoteHPBar?: Phaser.GameObjects.Graphics
   private remoteHPBarBg?: Phaser.GameObjects.Graphics
@@ -279,8 +279,6 @@ export class BattleScene extends Phaser.Scene {
     const tex = s.isAnimated ? `${s.prefix}-idle` : `char-${characterId}`
     this.remotePlayer.setTexture(tex)
     this.remotePlayer.setScale(s.scale)
-    this.remotePlayer.body.setSize(s.bodyW, s.bodyH)
-    this.remotePlayer.body.setOffset(s.offsetX, s.offsetY)
     if (s.isAnimated) this.remotePlayer.play(`${s.prefix}-idle`)
   }
 
@@ -290,10 +288,8 @@ export class BattleScene extends Phaser.Scene {
 
     const myId = room.sessionId
 
-    this.remotePlayer = this.physics.add.sprite(W / 2 + 100, H - 120, "char-dioupe")
-    // Remoto é puramente visual — sem física local para evitar jitter em plataformas
-    this.remotePlayer.body.setAllowGravity(false)
-    this.remotePlayer.body.setImmovable(true)
+    // Sprite puro — sem physics body, sem gravidade, sem colisão → zero jitter
+    this.remotePlayer = this.add.sprite(W / 2 + 100, H - 120, "char-dioupe")
     this.remotePlayer.setDepth(10)
     this.remotePlayer.setVisible(false)
     this.remoteCharacterId = ""
@@ -311,7 +307,7 @@ export class BattleScene extends Phaser.Scene {
       initState.players.forEach((player: any, sessionId: string) => {
         if (sessionId !== myId && player.characterId) {
           this.applyRemoteCharacter(player.characterId)
-          this.remotePlayer!.body.reset(player.x || W / 2 + 100, player.y || H - 120)
+          this.remotePlayer!.setPosition(player.x || W / 2 + 100, player.y || H - 120)
           this.remotePlayer!.setVisible(true)
           this.remoteNameLabel?.setVisible(true)
           this.remoteNameLabel?.setText(player.nickname || "")
@@ -340,9 +336,9 @@ export class BattleScene extends Phaser.Scene {
           this.applyRemoteCharacter(player.characterId)
         }
 
-        const tx = Phaser.Math.Linear(this.remotePlayer.x, player.x, 0.35)
-        const ty = Phaser.Math.Linear(this.remotePlayer.y, player.y, 0.35)
-        this.remotePlayer.body.reset(tx, ty)
+        const tx = Phaser.Math.Linear(this.remotePlayer.x, player.x, 0.4)
+        const ty = Phaser.Math.Linear(this.remotePlayer.y, player.y, 0.4)
+        this.remotePlayer.setPosition(tx, ty)
         this.remotePlayer.setFlipX(!player.facingRight)
 
         this.remoteNameLabel?.setPosition(tx, ty - 40)
@@ -505,16 +501,18 @@ export class BattleScene extends Phaser.Scene {
       this.jumpCount++
     }
 
-    // J — Ataque básico (attack1)
+    // J — Ataque básico
     this.attackCooldown = Math.max(0, this.attackCooldown - delta)
     if (Phaser.Input.Keyboard.JustDown(this.keyJ) && !this.isAttacking && !this.isTurning && this.attackCooldown === 0) {
+      if (this.online) getActiveRoom()?.send("attack", { type: "basic" })
       this.doAttack()
       this.attackCooldown = ATTACK_COOLDOWN
     }
 
-    // K — Golpe forte / área (attack2)
+    // K — Golpe forte
     this.attack2Cooldown = Math.max(0, this.attack2Cooldown - delta)
     if (Phaser.Input.Keyboard.JustDown(this.keyK) && !this.isAttacking && this.attack2Cooldown === 0) {
+      if (this.online) getActiveRoom()?.send("attack", { type: "strong" })
       this.doAttack2()
       this.attack2Cooldown = 800
     }
@@ -522,6 +520,7 @@ export class BattleScene extends Phaser.Scene {
     // L — Especial
     this.abilityCooldown = Math.max(0, this.abilityCooldown - delta)
     if (Phaser.Input.Keyboard.JustDown(this.keyL) && this.abilityCooldown === 0 && !this.isAttacking) {
+      if (this.online) getActiveRoom()?.send("attack", { type: "special" })
       this.doAbility()
       this.abilityCooldown = this.abilityMaxCooldown
       this.emitHUD()
@@ -619,7 +618,6 @@ export class BattleScene extends Phaser.Scene {
         const dy = Math.abs(bot.sprite.y - this.player.y)
         if (dx < 80 && dy < 80) this.hitBot(bot, 35)
       }
-      if (this.online) getActiveRoom()?.send("attack", { type: "strong" })
       return
     }
 
@@ -629,7 +627,6 @@ export class BattleScene extends Phaser.Scene {
     this.player.setFlipX(this.facingLeft)
     this.time.delayedCall(ATTACK_POINT_MS, () => {
       this.applyAttackDamage()
-      if (this.online) getActiveRoom()?.send("attack", { type: "strong" })
     })
     const finish2 = () => {
       this.isAttacking = false
@@ -650,30 +647,23 @@ export class BattleScene extends Phaser.Scene {
         this.isTurning = false
         this.isAttacking = true
         const atkAnim = this.facingLeft ? `${pfx}-attack-left` : `${pfx}-attack-right`
-        const texOk = this.textures.exists(atkAnim) &&
-          this.textures.get(atkAnim).key === atkAnim
-        const hasAnim = texOk && this.anims.exists(atkAnim)
+        const hasAnim = this.anims.exists(atkAnim)
 
         this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
 
         if (hasAnim) {
           this.player.play(atkAnim)
         } else {
-          // Textura não carregou — flash de tint e dano imediato
           this.player.setTint(0xffffff)
           this.time.delayedCall(100, () => this.player.clearTint())
-          this.applyAttackDamage()
-          if (this.online) getActiveRoom()?.send("attack", { type: "basic" })
           this.isAttacking = false
           return
         }
         this.player.setFlipX(false)
 
-        // Dano no ponto de impacto — sem guard de isAttacking para não bloquear
-        // se a animação completar antes (textura parcialmente carregada)
+        // Dano local em bots (solo) no ponto de impacto
         this.time.delayedCall(ATTACK_POINT_MS, () => {
           this.applyAttackDamage()
-          if (this.online) getActiveRoom()?.send("attack", { type: "basic" })
         })
 
         const finishAtk = () => {
@@ -708,7 +698,7 @@ export class BattleScene extends Phaser.Scene {
       this.time.delayedCall(150, () => slash.destroy())
     }
 
-    // Dano imediato para personagens não-animados
+    // Dano imediato em bots para personagens não-animados (solo)
     if (!this.sheet.isAnimated) {
       for (const bot of this.bots) {
         if (!bot.alive) continue
@@ -716,7 +706,6 @@ export class BattleScene extends Phaser.Scene {
         const dy = Math.abs(bot.sprite.y - this.player.y)
         if (dx < ATTACK_RANGE_X && dy < ATTACK_RANGE_Y) this.hitBot(bot, ATTACK_DAMAGE)
       }
-      if (this.online) getActiveRoom()?.send("attack", { type: "basic" })
     }
   }
 
@@ -877,7 +866,6 @@ export class BattleScene extends Phaser.Scene {
         const finish = () => {
           this.isAttacking = false
           this.triggerBWFlash()
-          if (this.online) getActiveRoom()?.send("attack", { type: "special" })
         }
         this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finish)
         this.time.delayedCall(3000, () => { if (this.isAttacking) finish() })
@@ -893,7 +881,6 @@ export class BattleScene extends Phaser.Scene {
         const finish = () => {
           this.spawnProjectile(facingLeft)
           this.isAttacking = false
-          if (this.online) getActiveRoom()?.send("attack", { type: "special" })
         }
         this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finish)
         this.time.delayedCall(3000, () => { if (this.isAttacking) finish() })
@@ -904,7 +891,6 @@ export class BattleScene extends Phaser.Scene {
         this.player.x += dir * 160
         this.player.setTint(0xa855f7)
         this.time.delayedCall(150, () => this.player.clearTint())
-        if (this.online) getActiveRoom()?.send("ability")
         break
       }
       case "super-jump": {
@@ -912,7 +898,6 @@ export class BattleScene extends Phaser.Scene {
         this.jumpCount = 0
         this.player.setTint(0x22c55e)
         this.time.delayedCall(200, () => this.player.clearTint())
-        if (this.online) getActiveRoom()?.send("ability")
         break
       }
       case "shield": {
@@ -922,7 +907,6 @@ export class BattleScene extends Phaser.Scene {
           this.shielded = false
           this.player.clearTint()
         })
-        if (this.online) getActiveRoom()?.send("ability")
         break
       }
     }
