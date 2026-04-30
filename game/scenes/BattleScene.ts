@@ -1,5 +1,6 @@
 import * as Phaser from "phaser"
 import { CHARACTERS, getCharacter } from "../config/characters"
+import { CharacterSheet, getSheet } from "../config/characterSheets"
 import { getActiveRoom, clearActiveRoom } from "../../lib/gameRoom"
 
 const SPEED = 200
@@ -67,6 +68,7 @@ export class BattleScene extends Phaser.Scene {
   private hp = 100
   private maxHp = 100
   private characterId = "dioupe"
+  private sheet!: CharacterSheet
   private nickname = "Player"
   private facingLeft = false
 
@@ -99,6 +101,7 @@ export class BattleScene extends Phaser.Scene {
 
   init(data: { characterId?: string; nickname?: string; online?: boolean; onHUDUpdate?: (d: HUDData) => void }) {
     this.characterId = data.characterId ?? "dioupe"
+    this.sheet       = getSheet(this.characterId)
     this.nickname    = data.nickname ?? "Player"
     this.online      = data.online ?? false
     this.onHUDUpdate = data.onHUDUpdate
@@ -195,23 +198,17 @@ export class BattleScene extends Phaser.Scene {
     // Player
     const spawnX = W / 2
     const spawnY = H - 120
-    const isDioupe = this.characterId === "dioupe"
-    const isBW     = this.characterId === "boletas-wolf"
-    const playerTexture = isDioupe ? "dioupe-idle" : isBW ? "bw-idle" : `char-${this.characterId}`
+    const playerTexture = this.sheet.isAnimated
+      ? `${this.sheet.prefix}-idle`
+      : `char-${this.characterId}`
     this.player = this.physics.add.sprite(spawnX, spawnY, playerTexture)
     this.player.setCollideWorldBounds(true)
     this.player.body.setGravityY(GRAVITY_EXTRA)
     this.player.setDepth(10)
-    if (isDioupe) {
-      this.player.setScale(0.75)
-      this.player.body.setSize(55, 100).setOffset(37, 20)
-      this.player.play("dioupe-idle")
-    }
-    if (isBW) {
-      this.player.setScale(0.75)
-      this.player.body.setSize(55, 100).setOffset(37, 20)
-      this.player.play("bw-idle")
-    }
+    this.player.setScale(this.sheet.scale)
+    this.player.body.setSize(this.sheet.bodyW, this.sheet.bodyH)
+    this.player.body.setOffset(this.sheet.offsetX, this.sheet.offsetY)
+    if (this.sheet.isAnimated) this.player.play(`${this.sheet.prefix}-idle`)
 
     this.nameLabel = this.add
       .text(spawnX, spawnY - 36, this.nickname, {
@@ -278,20 +275,13 @@ export class BattleScene extends Phaser.Scene {
   private applyRemoteCharacter(characterId: string) {
     if (!this.remotePlayer) return
     this.remoteCharacterId = characterId
-    const isDioupe = characterId === "dioupe"
-    const isBW     = characterId === "boletas-wolf"
-    const tex      = isDioupe ? "dioupe-idle" : isBW ? "bw-idle" : `char-${characterId}`
+    const s = getSheet(characterId)
+    const tex = s.isAnimated ? `${s.prefix}-idle` : `char-${characterId}`
     this.remotePlayer.setTexture(tex)
-    if (isDioupe || isBW) {
-      this.remotePlayer.setScale(0.75)
-      this.remotePlayer.body.setSize(55, 100)
-      this.remotePlayer.body.setOffset(37, 20)
-      this.remotePlayer.play(isDioupe ? "dioupe-idle" : "bw-idle")
-    } else {
-      this.remotePlayer.setScale(1)
-      this.remotePlayer.body.setSize(32, 48)
-      this.remotePlayer.body.setOffset(0, 0)
-    }
+    this.remotePlayer.setScale(s.scale)
+    this.remotePlayer.body.setSize(s.bodyW, s.bodyH)
+    this.remotePlayer.body.setOffset(s.offsetX, s.offsetY)
+    if (s.isAnimated) this.remotePlayer.play(`${s.prefix}-idle`)
   }
 
   private setupOnline(W: number, H: number) {
@@ -461,7 +451,7 @@ export class BattleScene extends Phaser.Scene {
     const onGround = body.blocked.down
     if (onGround) this.jumpCount = 0
 
-    const nameLabelOffset = this.characterId === "dioupe" ? 52 : this.characterId === "boletas-wolf" ? 55 : 36
+    const nameLabelOffset = this.sheet.nameLabelOffset
 
     this.nameLabel.setPosition(this.player.x, this.player.y - nameLabelOffset)
 
@@ -473,36 +463,35 @@ export class BattleScene extends Phaser.Scene {
       this.turnMoveTimer = Math.max(0, this.turnMoveTimer - delta)
       body.setVelocityX(body.velocity.x * 0.6)
     } else if (!this.isAttacking && !this.isTurning) {
-      const isAnimChar = this.characterId === "dioupe" || this.characterId === "boletas-wolf"
+      const { isAnimated, prefix: pfx } = this.sheet
       if (left) {
-        if (isAnimChar && !this.facingLeft) {
+        if (isAnimated && !this.facingLeft) {
           this.facingLeft = true
           this.turnMoveTimer = TURN_MOVE_DELAY
-        } else if (!isAnimChar) this.player.setFlipX(true)
+        } else if (!isAnimated) this.player.setFlipX(true)
         body.setVelocityX(-SPEED)
       } else if (right) {
-        if (isAnimChar && this.facingLeft) {
+        if (isAnimated && this.facingLeft) {
           this.facingLeft = false
           this.turnMoveTimer = TURN_MOVE_DELAY
-        } else if (!isAnimChar) this.player.setFlipX(false)
+        } else if (!isAnimated) this.player.setFlipX(false)
         body.setVelocityX(SPEED)
       } else {
         body.setVelocityX(body.velocity.x * 0.75)
       }
-      if (isAnimChar && !this.isAttacking) this.player.setFlipX(false)
+      if (isAnimated && !this.isAttacking) this.player.setFlipX(false)
     }
 
-    // Sprite animation — Dioupe e BoletasWolf
-    const isAnimChar = this.characterId === "dioupe" || this.characterId === "boletas-wolf"
-    const pfx = this.characterId === "dioupe" ? "dioupe" : "bw"
-    if (isAnimChar && !this.isTurning && !this.isAttacking) {
+    // Sprite animation
+    const { isAnimated, prefix: pfx } = this.sheet
+    if (isAnimated && !this.isTurning && !this.isAttacking) {
       const moving = left || right
       const currentAnim = this.player.anims.currentAnim?.key ?? ""
       if (moving) {
         const walkAnim = this.facingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
         if (currentAnim !== walkAnim) { this.player.setFlipX(false); this.player.play(walkAnim) }
       } else {
-        this.player.setFlipX(pfx === "dioupe" ? !this.facingLeft : !this.facingLeft)
+        this.player.setFlipX(!this.facingLeft)
         if (currentAnim !== `${pfx}-idle`) this.player.play(`${pfx}-idle`)
       }
     }
@@ -552,10 +541,9 @@ export class BattleScene extends Phaser.Scene {
 
   private updateRemoteAnim() {
     if (!this.remotePlayer?.visible) return
-    const isDioupe = this.remoteCharacterId === "dioupe"
-    const isBW     = this.remoteCharacterId === "boletas-wolf"
-    if (!isDioupe && !isBW) return
-    const pfx = isDioupe ? "dioupe" : "bw"
+    const s = getSheet(this.remoteCharacterId)
+    if (!s.isAnimated) return
+    const pfx = s.prefix
     if (Math.abs(this.remoteVX) > 10) {
       const walkAnim = !this.remotePlayer.flipX ? `${pfx}-walk-right` : `${pfx}-walk-left`
       if (this.remotePlayer.anims.currentAnim?.key !== walkAnim) this.remotePlayer.play(walkAnim)
@@ -619,10 +607,9 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private doAttack2() {
-    const isAnimChar = this.characterId === "dioupe" || this.characterId === "boletas-wolf"
-    const pfx = this.characterId === "dioupe" ? "dioupe" : "bw"
+    const { isAnimated, prefix: pfx } = this.sheet
 
-    if (!isAnimChar) {
+    if (!isAnimated) {
       // Golpe forte para personagens sem sprite animado
       const dir = this.player.flipX ? -1 : 1
       this.player.setTint(0xff8800)
@@ -656,8 +643,8 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private doAttack() {
-    if (this.characterId === "dioupe" || this.characterId === "boletas-wolf") {
-      const pfx = this.characterId === "dioupe" ? "dioupe" : "bw";
+    if (this.sheet.isAnimated) {
+      const pfx = this.sheet.prefix
       const wantLeft = this.facingLeft
       const needsTurn = wantLeft !== this.facingLeft
 
@@ -704,7 +691,7 @@ export class BattleScene extends Phaser.Scene {
 
     // Slash visual (dev only)
     if (SHOW_ATTACK_FX) {
-      const dir = (this.characterId === "dioupe" ? this.facingLeft : this.player.flipX) ? -1 : 1
+      const dir = (this.sheet.isAnimated ? this.facingLeft : this.player.flipX) ? -1 : 1
       const slash = this.add.graphics()
       slash.lineStyle(3, 0xf0f4ff, 0.9)
       slash.strokeEllipse(this.player.x + dir * 40, this.player.y, 60, 30)
@@ -712,14 +699,15 @@ export class BattleScene extends Phaser.Scene {
       this.time.delayedCall(150, () => slash.destroy())
     }
 
-    // Para personagens sem sprite animado o dano é imediato
-    if (this.characterId !== "dioupe") {
+    // Dano imediato para personagens não-animados
+    if (!this.sheet.isAnimated) {
       for (const bot of this.bots) {
         if (!bot.alive) continue
         const dx = Math.abs(bot.sprite.x - this.player.x)
         const dy = Math.abs(bot.sprite.y - this.player.y)
         if (dx < ATTACK_RANGE_X && dy < ATTACK_RANGE_Y) this.hitBot(bot, ATTACK_DAMAGE)
       }
+      if (this.online) getActiveRoom()?.send("attack", { type: "basic" })
     }
   }
 
@@ -868,40 +856,41 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private doAbility() {
-    switch (this.characterId) {
-      case "boletas-wolf": {
+    const { prefix: pfx, specialType } = this.sheet
+    switch (specialType) {
+      case "flash-stun": {
         this.isAttacking = true
-        const bwFacing = this.facingLeft
-        const bwAnim = bwFacing ? "bw-special-left" : "bw-special-right"
+        const facing = this.facingLeft
+        const anim = facing ? `${pfx}-special-left` : `${pfx}-special-right`
         this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
-        this.player.play(bwAnim)
+        this.player.play(anim)
         this.player.setFlipX(false)
-        const finishBW = () => {
+        const finish = () => {
           this.isAttacking = false
           this.triggerBWFlash()
           if (this.online) getActiveRoom()?.send("attack", { type: "special" })
         }
-        this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishBW)
-        this.time.delayedCall(3000, () => { if (this.isAttacking) finishBW() })
+        this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finish)
+        this.time.delayedCall(3000, () => { if (this.isAttacking) finish() })
         break
       }
-      case "dioupe": {
+      case "projectile": {
         this.isAttacking = true
         const facingLeft = this.facingLeft
-        const specialAnim = facingLeft ? "dioupe-special-left" : "dioupe-special-right"
+        const anim = facingLeft ? `${pfx}-special-left` : `${pfx}-special-right`
         this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
-        this.player.play(specialAnim)
+        this.player.play(anim)
         this.player.setFlipX(false)
-        const finishDioupe = () => {
+        const finish = () => {
           this.spawnProjectile(facingLeft)
           this.isAttacking = false
           if (this.online) getActiveRoom()?.send("attack", { type: "special" })
         }
-        this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishDioupe)
-        this.time.delayedCall(3000, () => { if (this.isAttacking) finishDioupe() })
+        this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finish)
+        this.time.delayedCall(3000, () => { if (this.isAttacking) finish() })
         break
       }
-      case "ana": {
+      case "teleport": {
         const dir = this.player.flipX ? -1 : 1
         this.player.x += dir * 160
         this.player.setTint(0xa855f7)
@@ -909,7 +898,7 @@ export class BattleScene extends Phaser.Scene {
         if (this.online) getActiveRoom()?.send("ability")
         break
       }
-      case "pedro": {
+      case "super-jump": {
         this.player.body.setVelocityY(-900)
         this.jumpCount = 0
         this.player.setTint(0x22c55e)
@@ -917,7 +906,7 @@ export class BattleScene extends Phaser.Scene {
         if (this.online) getActiveRoom()?.send("ability")
         break
       }
-      case "deco": {
+      case "shield": {
         this.shielded = true
         this.player.setTint(0xf97316)
         this.time.delayedCall(3000, () => {
