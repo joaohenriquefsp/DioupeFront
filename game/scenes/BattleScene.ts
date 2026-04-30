@@ -291,8 +291,9 @@ export class BattleScene extends Phaser.Scene {
     const myId = room.sessionId
 
     this.remotePlayer = this.physics.add.sprite(W / 2 + 100, H - 120, "char-dioupe")
-    this.remotePlayer.setCollideWorldBounds(true)
-    this.remotePlayer.body.setGravityY(GRAVITY_EXTRA)
+    // Remoto é puramente visual — sem física local para evitar jitter em plataformas
+    this.remotePlayer.body.setAllowGravity(false)
+    this.remotePlayer.body.setImmovable(true)
     this.remotePlayer.setDepth(10)
     this.remotePlayer.setVisible(false)
     this.remoteCharacterId = ""
@@ -304,15 +305,13 @@ export class BattleScene extends Phaser.Scene {
     this.remoteHPBarBg = this.add.graphics().setDepth(12)
     this.remoteHPBar   = this.add.graphics().setDepth(13)
 
-    this.physics.add.collider(this.remotePlayer, this.platforms)
-
     // Aplica textura do adversário uma única vez lendo o estado atual
     const initState = (room as any).state
     if (initState?.players) {
       initState.players.forEach((player: any, sessionId: string) => {
         if (sessionId !== myId && player.characterId) {
           this.applyRemoteCharacter(player.characterId)
-          this.remotePlayer!.setPosition(player.x || W / 2 + 100, player.y || H - 120)
+          this.remotePlayer!.body.reset(player.x || W / 2 + 100, player.y || H - 120)
           this.remotePlayer!.setVisible(true)
           this.remoteNameLabel?.setVisible(true)
           this.remoteNameLabel?.setText(player.nickname || "")
@@ -341,9 +340,9 @@ export class BattleScene extends Phaser.Scene {
           this.applyRemoteCharacter(player.characterId)
         }
 
-        const tx = Phaser.Math.Linear(this.remotePlayer.x, player.x, 0.3)
-        const ty = Phaser.Math.Linear(this.remotePlayer.y, player.y, 0.3)
-        this.remotePlayer.setPosition(tx, ty)
+        const tx = Phaser.Math.Linear(this.remotePlayer.x, player.x, 0.35)
+        const ty = Phaser.Math.Linear(this.remotePlayer.y, player.y, 0.35)
+        this.remotePlayer.body.reset(tx, ty)
         this.remotePlayer.setFlipX(!player.facingRight)
 
         this.remoteNameLabel?.setPosition(tx, ty - 40)
@@ -629,7 +628,6 @@ export class BattleScene extends Phaser.Scene {
     this.player.play(`${pfx}-attack2`)
     this.player.setFlipX(this.facingLeft)
     this.time.delayedCall(ATTACK_POINT_MS, () => {
-      if (!this.isAttacking) return
       this.applyAttackDamage()
       if (this.online) getActiveRoom()?.send("attack", { type: "strong" })
     })
@@ -639,7 +637,7 @@ export class BattleScene extends Phaser.Scene {
       this.player.setFlipX(!this.facingLeft)
     }
     this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finish2)
-    this.time.delayedCall(2000, () => { if (this.isAttacking) finish2() })
+    this.time.delayedCall(1200, () => { if (this.isAttacking) finish2() })
   }
 
   private doAttack() {
@@ -652,28 +650,39 @@ export class BattleScene extends Phaser.Scene {
         this.isTurning = false
         this.isAttacking = true
         const atkAnim = this.facingLeft ? `${pfx}-attack-left` : `${pfx}-attack-right`
-        const hasAnim = this.anims.exists(atkAnim)
+        const texOk = this.textures.exists(atkAnim) &&
+          this.textures.get(atkAnim).key === atkAnim
+        const hasAnim = texOk && this.anims.exists(atkAnim)
 
         this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
 
         if (hasAnim) {
           this.player.play(atkAnim)
         } else {
-          this.player.play(`${pfx}-idle`)
+          // Textura não carregou — flash de tint e dano imediato
+          this.player.setTint(0xffffff)
+          this.time.delayedCall(100, () => this.player.clearTint())
+          this.applyAttackDamage()
+          if (this.online) getActiveRoom()?.send("attack", { type: "basic" })
+          this.isAttacking = false
+          return
         }
         this.player.setFlipX(false)
 
+        // Dano no ponto de impacto — sem guard de isAttacking para não bloquear
+        // se a animação completar antes (textura parcialmente carregada)
         this.time.delayedCall(ATTACK_POINT_MS, () => {
-          if (!this.isAttacking) return
           this.applyAttackDamage()
           if (this.online) getActiveRoom()?.send("attack", { type: "basic" })
         })
 
-        this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+        const finishAtk = () => {
           this.isAttacking = false
           this.player.play(`${pfx}-idle`)
           this.player.setFlipX(!this.facingLeft)
-        })
+        }
+        this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishAtk)
+        this.time.delayedCall(1000, () => { if (this.isAttacking) finishAtk() })
       }
 
       if (needsTurn) {
