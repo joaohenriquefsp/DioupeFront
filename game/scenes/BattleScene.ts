@@ -90,6 +90,7 @@ export class BattleScene extends Phaser.Scene {
   private remoteMaxHP = 100
   private remoteDead = false
   private remoteCharacterId = ""
+  private remoteVX = 0
   private syncTimer = 0
 
   constructor() {
@@ -361,6 +362,7 @@ export class BattleScene extends Phaser.Scene {
         this.remoteHP    = player.hp
         this.remoteMaxHP = player.maxHp
         this.remoteDead  = !player.alive
+        this.remoteVX    = player.vx ?? 0
 
         if (!player.alive && !this.remoteDead) {
           this.tweens.add({
@@ -554,8 +556,7 @@ export class BattleScene extends Phaser.Scene {
     const isBW     = this.remoteCharacterId === "boletas-wolf"
     if (!isDioupe && !isBW) return
     const pfx = isDioupe ? "dioupe" : "bw"
-    const vx  = (this.remotePlayer.body as Phaser.Physics.Arcade.Body).velocity.x
-    if (Math.abs(vx) > 10) {
+    if (Math.abs(this.remoteVX) > 10) {
       const walkAnim = !this.remotePlayer.flipX ? `${pfx}-walk-right` : `${pfx}-walk-left`
       if (this.remotePlayer.anims.currentAnim?.key !== walkAnim) this.remotePlayer.play(walkAnim)
     } else {
@@ -620,20 +621,38 @@ export class BattleScene extends Phaser.Scene {
   private doAttack2() {
     const isAnimChar = this.characterId === "dioupe" || this.characterId === "boletas-wolf"
     const pfx = this.characterId === "dioupe" ? "dioupe" : "bw"
-    if (!isAnimChar) return
+
+    if (!isAnimChar) {
+      // Golpe forte para personagens sem sprite animado
+      const dir = this.player.flipX ? -1 : 1
+      this.player.setTint(0xff8800)
+      this.time.delayedCall(150, () => this.player.clearTint())
+      for (const bot of this.bots) {
+        if (!bot.alive) continue
+        const dx = Math.abs(bot.sprite.x - this.player.x)
+        const dy = Math.abs(bot.sprite.y - this.player.y)
+        if (dx < 80 && dy < 80) this.hitBot(bot, 35)
+      }
+      if (this.online) getActiveRoom()?.send("attack", { type: "strong" })
+      return
+    }
 
     this.isAttacking = true
     this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
     this.player.play(`${pfx}-attack2`)
     this.player.setFlipX(this.facingLeft)
     this.time.delayedCall(ATTACK_POINT_MS, () => {
-      if (this.isAttacking) this.applyAttackDamage()
+      if (!this.isAttacking) return
+      this.applyAttackDamage()
+      if (this.online) getActiveRoom()?.send("attack", { type: "strong" })
     })
-    this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+    const finish2 = () => {
       this.isAttacking = false
       this.player.play(`${pfx}-idle`)
       this.player.setFlipX(!this.facingLeft)
-    })
+    }
+    this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finish2)
+    this.time.delayedCall(2000, () => { if (this.isAttacking) finish2() })
   }
 
   private doAttack() {
@@ -855,12 +874,15 @@ export class BattleScene extends Phaser.Scene {
         const bwFacing = this.facingLeft
         const bwAnim = bwFacing ? "bw-special-left" : "bw-special-right"
         this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
-        this.player.setFlipX(false)
         this.player.play(bwAnim)
-        this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+        this.player.setFlipX(false)
+        const finishBW = () => {
           this.isAttacking = false
           this.triggerBWFlash()
-        })
+          if (this.online) getActiveRoom()?.send("attack", { type: "special" })
+        }
+        this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishBW)
+        this.time.delayedCall(3000, () => { if (this.isAttacking) finishBW() })
         break
       }
       case "dioupe": {
@@ -868,12 +890,15 @@ export class BattleScene extends Phaser.Scene {
         const facingLeft = this.facingLeft
         const specialAnim = facingLeft ? "dioupe-special-left" : "dioupe-special-right"
         this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
-        this.player.setFlipX(false)
         this.player.play(specialAnim)
-        this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+        this.player.setFlipX(false)
+        const finishDioupe = () => {
           this.spawnProjectile(facingLeft)
           this.isAttacking = false
-        })
+          if (this.online) getActiveRoom()?.send("attack", { type: "special" })
+        }
+        this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishDioupe)
+        this.time.delayedCall(3000, () => { if (this.isAttacking) finishDioupe() })
         break
       }
       case "ana": {
@@ -881,6 +906,7 @@ export class BattleScene extends Phaser.Scene {
         this.player.x += dir * 160
         this.player.setTint(0xa855f7)
         this.time.delayedCall(150, () => this.player.clearTint())
+        if (this.online) getActiveRoom()?.send("ability")
         break
       }
       case "pedro": {
@@ -888,6 +914,7 @@ export class BattleScene extends Phaser.Scene {
         this.jumpCount = 0
         this.player.setTint(0x22c55e)
         this.time.delayedCall(200, () => this.player.clearTint())
+        if (this.online) getActiveRoom()?.send("ability")
         break
       }
       case "deco": {
@@ -897,6 +924,7 @@ export class BattleScene extends Phaser.Scene {
           this.shielded = false
           this.player.clearTint()
         })
+        if (this.online) getActiveRoom()?.send("ability")
         break
       }
     }
