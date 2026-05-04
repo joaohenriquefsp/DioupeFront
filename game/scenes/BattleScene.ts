@@ -503,9 +503,9 @@ export class BattleScene extends Phaser.Scene {
       if (isAnimated) this.player.setFlipX(false)
     }
 
-    // Animação idle/walk
+    // Animação idle/walk — recovery não bloqueia (apenas isAttacking bloqueia durante a animação do golpe)
     const { isAnimated, prefix: pfx } = this.sheet
-    if (isAnimated && !this.isAttacking && this.recoveryTimer === 0) {
+    if (isAnimated && !this.isAttacking) {
       const moving = left || right
       const currentAnim = this.player.anims.currentAnim?.key ?? ""
       if (moving) {
@@ -569,7 +569,7 @@ export class BattleScene extends Phaser.Scene {
 
     // L — Especial
     this.abilityCooldown = Math.max(0, this.abilityCooldown - delta)
-    if (Phaser.Input.Keyboard.JustDown(this.keyL) && this.abilityCooldown === 0 && !this.isAttacking && this.recoveryTimer === 0) {
+    if (Phaser.Input.Keyboard.JustDown(this.keyL) && this.abilityCooldown === 0 && !this.isAttacking) {
       if (this.online) getActiveRoom()?.send("attack", { type: "special", facingRight: !this.facingLeft })
       this.doAbility()
       this.abilityCooldown = this.abilityMaxCooldown
