@@ -50,8 +50,14 @@ export function createPhaserGame(options: GameOptions): Phaser.Game {
       mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
     },
-    disableVisibilityChange: true,
   }
 
-  return new Phaser.Game(config)
+  const game = new Phaser.Game(config)
+
+  // Phaser 4 removeu disableVisibilityChange — desconecta o handler manualmente
+  // para o jogo não pausar quando o tab fica oculto (minimizar, trocar tab)
+  game.events.removeAllListeners(Phaser.Core.Events.HIDDEN)
+  game.events.on(Phaser.Core.Events.HIDDEN, () => { /* mantém rodando */ })
+
+  return game
 }

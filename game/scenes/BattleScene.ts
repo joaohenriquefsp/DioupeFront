@@ -478,6 +478,9 @@ export class BattleScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number) {
+    // Capa delta a 50ms: evita física explodindo quando RAF é throttleado em background
+    delta = Math.min(delta, 50)
+
     const body = this.player.body
     const onGround = body.blocked.down
     if (onGround) this.jumpCount = 0
