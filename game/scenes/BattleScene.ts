@@ -176,7 +176,7 @@ export class BattleScene extends Phaser.Scene {
     reg("bw-walk-left",     "bw-walk-left",     4, 8,  true)
     reg("bw-walk-right",    "bw-walk-right",    4, 8,  true)
     reg("bw-attack-right",  "bw-attack-right",  3, 7,  false)
-    reg("bw-attack-left",   "bw-attack-left",   4, 7,  false, 1)  // frame 0 transparente
+    reg("bw-attack-left",   "bw-attack-left",   7, 7,  false, 4)  // frames 0-3 transparentes, conteúdo em 4-7
     reg("bw-attack2",       "bw-attack2",       3, 7,  false)
     reg("bw-special-left",  "bw-special-left",  3, 6,  false)
     reg("bw-special-right", "bw-special-right", 3, 6,  false)
@@ -397,8 +397,16 @@ export class BattleScene extends Phaser.Scene {
         this.remoteIsAttacking = false
         if (this.remotePlayer) {
           this.remotePlayer.play(`${pfx}-idle`)
-          // Usa remoteFacingLeft para flip correto do idle (espelha lógica local)
           this.remotePlayer.setFlipX(!this.remoteFacingLeft)
+          // Cria o objeto visual do especial na tela de quem recebe
+          if (data.type === "special") {
+            const rs = getSheet(this.remoteCharacterId)
+            if (rs.specialType === "flash-stun") {
+              this.triggerBWFlash()
+            } else if (rs.specialType === "projectile" && this.remotePlayer) {
+              this.spawnProjectileAt(!data.facingRight, this.remotePlayer.x, this.remotePlayer.y)
+            }
+          }
         }
       }
       this.remotePlayer.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishRemoteAtk)
@@ -821,12 +829,17 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private spawnProjectile(facingLeft: boolean) {
+    this.spawnProjectileAt(facingLeft, this.player.x, this.player.y, true)
+  }
+
+  // Cria o projétil a partir de coordenadas arbitrárias (local ou remoto)
+  private spawnProjectileAt(facingLeft: boolean, originX: number, originY: number, withBotHit = false) {
     const dir = facingLeft ? -1 : 1
     const side = facingLeft ? "left" : "right"
 
     const proj = this.physics.add.sprite(
-      this.player.x + dir * 60,
-      this.player.y - 10,
+      originX + dir * 60,
+      originY - 10,
       `dioupe-power-${side}`
     )
     proj.setScale(0.75)
@@ -841,19 +854,20 @@ export class BattleScene extends Phaser.Scene {
       if (proj.active) proj.play(`dioupe-power-${side}-travel`)
     })
 
-    const onHit = (bot: Bot) => {
-      if (!proj.active) return
-      proj.body.setVelocityX(0)
-      proj.play(`dioupe-power-${side}-impact`)
-      proj.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
-        if (proj.active) proj.destroy()
-      })
-      this.hitBot(bot, 60)
-    }
-
-    for (const bot of this.bots) {
-      if (!bot.alive) continue
-      this.physics.add.overlap(proj, bot.sprite, () => onHit(bot))
+    if (withBotHit) {
+      const onHit = (bot: Bot) => {
+        if (!proj.active) return
+        proj.body.setVelocityX(0)
+        proj.play(`dioupe-power-${side}-impact`)
+        proj.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+          if (proj.active) proj.destroy()
+        })
+        this.hitBot(bot, 60)
+      }
+      for (const bot of this.bots) {
+        if (!bot.alive) continue
+        this.physics.add.overlap(proj, bot.sprite, () => onHit(bot))
+      }
     }
 
     this.time.delayedCall(4000, () => { if (proj.active) proj.destroy() })
