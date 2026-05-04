@@ -11,20 +11,19 @@ const BOT_SPEED = 110
 const GRAVITY_EXTRA = 700
 const SHOW_ATTACK_FX = process.env.NODE_ENV === "development"
 
-// Frame data — baseado nos sprites a 7fps
+// Frame data por tipo de ataque (startup = ms até janela de hit)
 const ATTACK_FPS = 7
 const ATTACK_POINT_FRAME = 1
 const ATTACK_POINT_MS = (ATTACK_POINT_FRAME / ATTACK_FPS) * 1000  // ~143ms
 
 interface AttackData {
-  startup: number   // ms até a janela de hit abrir
+  startup: number
   damage: number
   rangeX: number
   rangeY: number
-  recovery: number  // ms bloqueado após animação completar (recovery frames)
+  recovery: number
 }
 
-// Startup/active/recovery por ataque — igual online e solo
 const ATTACK_DATA: Record<"basic" | "strong" | "special", AttackData> = {
   basic:  { startup: ATTACK_POINT_MS,      damage: 20, rangeX: 65,   rangeY: 60,   recovery: 220 },
   strong: { startup: ATTACK_POINT_MS + 60, damage: 35, rangeX: 80,   rangeY: 80,   recovery: 380 },
@@ -82,9 +81,11 @@ export class BattleScene extends Phaser.Scene {
 
   // Estado de combate
   private isAttacking = false
-  private recoveryTimer = 0                          // ms bloqueado após ataque
-  private queuedAttack: "basic" | "strong" | null = null  // input buffer
-  private hitBotsThisAttack = new Set<Bot>()         // evita double-hit
+  private isUsingAbility = false        // previne K de cancelar especial
+  private attackSafetyId = 0           // geração por ataque — invalida safeties antigas
+  private recoveryTimer = 0
+  private queuedAttack: "basic" | "strong" | null = null
+  private hitBotsThisAttack = new Set<Bot>()
 
   private nameLabel!: Phaser.GameObjects.Text
   private bots: Bot[] = []
@@ -100,6 +101,7 @@ export class BattleScene extends Phaser.Scene {
   private remoteDead = false
   private remoteCharacterId = ""
   private remoteVX = 0
+  private remoteFacingLeft = false     // direção real do remoto (separada do flipX)
   private syncTimer = 0
   private remoteTargetX = 0
   private remoteTargetY = 0
@@ -156,15 +158,16 @@ export class BattleScene extends Phaser.Scene {
   }
 
   create() {
+    // Sempre re-registra animações para garantir start/end corretos entre sessions
     const reg = (key: string, tex: string, end: number, fps: number, loop: boolean, start = 0) => {
-      if (!this.anims.exists(key))
-        this.anims.create({ key, frames: this.anims.generateFrameNumbers(tex, { start, end }), frameRate: fps, repeat: loop ? -1 : 0 })
+      if (this.anims.exists(key)) this.anims.remove(key)
+      this.anims.create({ key, frames: this.anims.generateFrameNumbers(tex, { start, end }), frameRate: fps, repeat: loop ? -1 : 0 })
     }
     reg("dioupe-idle",          "dioupe-idle",          7, 8,  true)
     reg("dioupe-walk-left",     "dioupe-walk-left",     7, 8,  true)
     reg("dioupe-walk-right",    "dioupe-walk-right",    7, 8,  true)
     reg("dioupe-attack-right",  "dioupe-attack-right",  3, 7,  false)
-    reg("dioupe-attack-left",   "dioupe-attack-left",   4, 7,  false, 1)  // frame 0 is transparent
+    reg("dioupe-attack-left",   "dioupe-attack-left",   4, 7,  false, 1)  // frame 0 transparente
     reg("dioupe-attack2",       "dioupe-attack2",       4, 7,  false)
     reg("dioupe-special-left",  "dioupe-special-left",  8, 6,  false)
     reg("dioupe-special-right", "dioupe-special-right", 8, 6,  false)
@@ -173,15 +176,15 @@ export class BattleScene extends Phaser.Scene {
     reg("bw-walk-left",     "bw-walk-left",     4, 8,  true)
     reg("bw-walk-right",    "bw-walk-right",    4, 8,  true)
     reg("bw-attack-right",  "bw-attack-right",  3, 7,  false)
-    reg("bw-attack-left",   "bw-attack-left",   4, 7,  false, 1)  // frame 0 is transparent
+    reg("bw-attack-left",   "bw-attack-left",   4, 7,  false, 1)  // frame 0 transparente
     reg("bw-attack2",       "bw-attack2",       3, 7,  false)
     reg("bw-special-left",  "bw-special-left",  3, 6,  false)
     reg("bw-special-right", "bw-special-right", 3, 6,  false)
     reg("bw-flash-skill",   "bw-flash-skill",   3, 8,  false)
 
     const regFrames = (key: string, tex: string, frames: number[], fps: number, loop: boolean) => {
-      if (!this.anims.exists(key))
-        this.anims.create({ key, frames: this.anims.generateFrameNumbers(tex, { frames }), frameRate: fps, repeat: loop ? -1 : 0 })
+      if (this.anims.exists(key)) this.anims.remove(key)
+      this.anims.create({ key, frames: this.anims.generateFrameNumbers(tex, { frames }), frameRate: fps, repeat: loop ? -1 : 0 })
     }
     regFrames("dioupe-power-right-intro",  "dioupe-power-right", [0,1,2,3], 6, false)
     regFrames("dioupe-power-right-travel", "dioupe-power-right", [2,3],     5, true)
@@ -222,9 +225,7 @@ export class BattleScene extends Phaser.Scene {
 
     this.nameLabel = this.add
       .text(spawnX, spawnY - 36, this.nickname, {
-        fontSize: "11px",
-        color: "#f0f4ff",
-        fontFamily: "monospace",
+        fontSize: "11px", color: "#f0f4ff", fontFamily: "monospace",
       })
       .setOrigin(0.5)
       .setDepth(11)
@@ -256,9 +257,11 @@ export class BattleScene extends Phaser.Scene {
     if (this.syncTimer >= 50) {
       this.syncTimer = 0
       room.send("position", { x: this.player.x, y: this.player.y })
+      // Envia facingRight explícito — servidor não precisa derivar de vx
       room.send("move", {
         vx: this.player.body.velocity.x,
-        vy: this.player.body.velocity.y
+        vy: this.player.body.velocity.y,
+        facingRight: !this.facingLeft,
       })
     }
   }
@@ -287,7 +290,10 @@ export class BattleScene extends Phaser.Scene {
     const tex = s.isAnimated ? `${s.prefix}-idle` : `char-${characterId}`
     this.remotePlayer.setTexture(tex)
     this.remotePlayer.setScale(s.scale)
-    if (s.isAnimated) this.remotePlayer.play(`${s.prefix}-idle`)
+    if (s.isAnimated) {
+      this.remotePlayer.play(`${s.prefix}-idle`)
+      this.remotePlayer.setFlipX(!this.remoteFacingLeft)
+    }
   }
 
   private setupOnline(W: number, H: number) {
@@ -312,6 +318,7 @@ export class BattleScene extends Phaser.Scene {
     if (initState?.players) {
       initState.players.forEach((player: any, sessionId: string) => {
         if (sessionId !== myId && player.characterId) {
+          this.remoteFacingLeft = !player.facingRight
           this.applyRemoteCharacter(player.characterId)
           this.remotePlayer!.setPosition(player.x || W / 2 + 100, player.y || H - 120)
           this.remotePlayer!.setVisible(true)
@@ -341,7 +348,8 @@ export class BattleScene extends Phaser.Scene {
           this.applyRemoteCharacter(player.characterId)
         }
 
-        this.remotePlayer.setFlipX(!player.facingRight)
+        // Armazena direção real — updateRemoteAnim() aplica o flip correto
+        this.remoteFacingLeft = !player.facingRight
         this.remoteNameLabel?.setText(player.nickname)
         this.remoteTargetX = player.x
         this.remoteTargetY = player.y
@@ -380,6 +388,8 @@ export class BattleScene extends Phaser.Scene {
       }
 
       if (!this.anims.exists(anim)) return
+      // Remove listeners anteriores antes de adicionar novo
+      this.remotePlayer.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
       this.remoteIsAttacking = true
       this.remotePlayer.play(anim)
 
@@ -387,7 +397,8 @@ export class BattleScene extends Phaser.Scene {
         this.remoteIsAttacking = false
         if (this.remotePlayer) {
           this.remotePlayer.play(`${pfx}-idle`)
-          this.remotePlayer.setFlipX(!data.facingRight)
+          // Usa remoteFacingLeft para flip correto do idle (espelha lógica local)
+          this.remotePlayer.setFlipX(!this.remoteFacingLeft)
         }
       }
       this.remotePlayer.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishRemoteAtk)
@@ -429,9 +440,7 @@ export class BattleScene extends Phaser.Scene {
 
       const nameLabel = this.add
         .text(x, y - 36, char.name, {
-          fontSize: "11px",
-          color: "#f0f4ff",
-          fontFamily: "monospace",
+          fontSize: "11px", color: "#f0f4ff", fontFamily: "monospace",
         })
         .setOrigin(0.5)
         .setDepth(11)
@@ -440,18 +449,12 @@ export class BattleScene extends Phaser.Scene {
       const hpBar = this.add.graphics().setDepth(13)
 
       this.bots.push({
-        sprite,
-        hp: char.hp,
-        maxHp: char.hp,
-        color: char.color,
-        nameLabel,
-        hpBarBg,
-        hpBar,
+        sprite, hp: char.hp, maxHp: char.hp, color: char.color,
+        nameLabel, hpBarBg, hpBar,
         direction: i % 2 === 0 ? 1 : -1,
         dirTimer: 2000 + Math.random() * 1500,
         jumpTimer: 1500 + Math.random() * 2000,
-        alive: true,
-        stunTimer: 0,
+        alive: true, stunTimer: 0,
       })
     })
   }
@@ -503,7 +506,7 @@ export class BattleScene extends Phaser.Scene {
       if (isAnimated) this.player.setFlipX(false)
     }
 
-    // Animação idle/walk — recovery não bloqueia (apenas isAttacking bloqueia durante a animação do golpe)
+    // Animação idle/walk — recovery não bloqueia (isAttacking bloqueia durante o golpe)
     const { isAnimated, prefix: pfx } = this.sheet
     if (isAnimated && !this.isAttacking) {
       const moving = left || right
@@ -550,10 +553,10 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
-    // K — Golpe forte (pode cancelar J ou enfileirar durante recovery)
+    // K — Golpe forte (cancela J, mas NÃO cancela especial)
     this.attack2Cooldown = Math.max(0, this.attack2Cooldown - delta)
     if (Phaser.Input.Keyboard.JustDown(this.keyK) && this.attack2Cooldown === 0) {
-      if (this.isAttacking) {
+      if (this.isAttacking && !this.isUsingAbility) {
         // Cancela J — SF-style cancel
         this.isAttacking = false
         this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
@@ -561,13 +564,13 @@ export class BattleScene extends Phaser.Scene {
         this.attack2Cooldown = 800
       } else if (this.recoveryTimer > 0) {
         this.queuedAttack = "strong"
-      } else {
+      } else if (!this.isAttacking) {
         this.triggerAttack("strong")
         this.attack2Cooldown = 800
       }
     }
 
-    // L — Especial
+    // L — Especial (recovery não bloqueia)
     this.abilityCooldown = Math.max(0, this.abilityCooldown - delta)
     if (Phaser.Input.Keyboard.JustDown(this.keyL) && this.abilityCooldown === 0 && !this.isAttacking) {
       if (this.online) getActiveRoom()?.send("attack", { type: "special", facingRight: !this.facingLeft })
@@ -587,15 +590,16 @@ export class BattleScene extends Phaser.Scene {
     if (this.online && this.remotePlayer?.visible) this.drawRemoteHP()
   }
 
-  // Dispara um ataque com frame data correto — usado por J, K e input buffer
+  // Dispara ataque com frame data — J, K e input buffer
   private triggerAttack(type: "basic" | "strong") {
     const data = ATTACK_DATA[type]
     const { isAnimated, prefix: pfx } = this.sheet
 
     this.hitBotsThisAttack.clear()
+    this.isUsingAbility = false
+    const myId = ++this.attackSafetyId
 
     if (!isAnimated) {
-      // Personagens sem sprite: tint flash + dano imediato + cooldown controla ritmo
       this.player.setTint(type === "basic" ? 0xffffff : 0xff8800)
       this.time.delayedCall(80, () => this.player.clearTint())
       if (this.online) {
@@ -613,57 +617,47 @@ export class BattleScene extends Phaser.Scene {
       return
     }
 
-    // Personagens animados: startup → active → recovery
     this.isAttacking = true
 
-    let anim: string
-    if (type === "basic") {
-      anim = this.facingLeft ? `${pfx}-attack-left` : `${pfx}-attack-right`
-    } else {
-      anim = `${pfx}-attack2`
-    }
+    const anim = type === "basic"
+      ? (this.facingLeft ? `${pfx}-attack-left` : `${pfx}-attack-right`)
+      : `${pfx}-attack2`
 
-    if (!this.anims.exists(anim)) {
-      this.isAttacking = false
-      return
-    }
+    if (!this.anims.exists(anim)) { this.isAttacking = false; return }
 
     this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
     this.player.play(anim)
     this.player.setFlipX(type === "strong" ? this.facingLeft : false)
 
-    // Captura direção no momento do ataque para o delayedCall
-    const capturedFacing = this.facingLeft
+    // Online: envia imediatamente — animação no inimigo aparece o mais rápido possível
+    if (this.online) {
+      getActiveRoom()?.send("attack", { type, facingRight: !this.facingLeft })
+    }
 
-    // Janela de hit — startup delay antes do dano (igual online e solo)
-    this.time.delayedCall(data.startup, () => {
-      if (this.online) {
-        getActiveRoom()?.send("attack", { type, facingRight: !capturedFacing })
-      }
-      for (const bot of this.bots) {
-        if (!bot.alive || this.hitBotsThisAttack.has(bot)) continue
-        const dx = Math.abs(bot.sprite.x - this.player.x)
-        const dy = Math.abs(bot.sprite.y - this.player.y)
-        if (dx < data.rangeX && dy < data.rangeY) {
-          this.hitBotsThisAttack.add(bot)
-          this.hitBot(bot, data.damage)
-        }
-      }
-    })
-
-    // Slash visual (dev)
-    if (SHOW_ATTACK_FX) {
+    // Bots: dano no ponto de impacto (solo apenas)
+    if (!this.online) {
+      const capturedFacing = this.facingLeft
       this.time.delayedCall(data.startup, () => {
-        const dir = capturedFacing ? -1 : 1
-        const slash = this.add.graphics()
-        slash.lineStyle(4, 0xfbbf24, 1)
-        slash.strokeEllipse(this.player.x + dir * 45, this.player.y, 70, 35)
-        slash.setDepth(15)
-        this.time.delayedCall(120, () => slash.destroy())
+        for (const bot of this.bots) {
+          if (!bot.alive || this.hitBotsThisAttack.has(bot)) continue
+          const dx = Math.abs(bot.sprite.x - this.player.x)
+          const dy = Math.abs(bot.sprite.y - this.player.y)
+          if (dx < data.rangeX && dy < data.rangeY) {
+            this.hitBotsThisAttack.add(bot)
+            this.hitBot(bot, data.damage)
+          }
+        }
+        if (SHOW_ATTACK_FX) {
+          const dir = capturedFacing ? -1 : 1
+          const slash = this.add.graphics()
+          slash.lineStyle(4, 0xfbbf24, 1)
+          slash.strokeEllipse(this.player.x + dir * 45, this.player.y, 70, 35)
+          slash.setDepth(15)
+          this.time.delayedCall(120, () => slash.destroy())
+        }
       })
     }
 
-    // Fim da animação → recovery frames
     const finishAtk = () => {
       this.isAttacking = false
       this.player.play(`${pfx}-idle`)
@@ -671,9 +665,11 @@ export class BattleScene extends Phaser.Scene {
       this.recoveryTimer = data.recovery
     }
     this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishAtk)
-    // Safety timeout caso ANIMATION_COMPLETE não dispare
+    // Safety com ID de geração — não dispara se outro ataque ou especial iniciou
     const safetyMs = type === "basic" ? 1000 : 1200
-    this.time.delayedCall(safetyMs, () => { if (this.isAttacking) finishAtk() })
+    this.time.delayedCall(safetyMs, () => {
+      if (this.isAttacking && this.attackSafetyId === myId) finishAtk()
+    })
   }
 
   private updateRemotePos(delta: number) {
@@ -696,11 +692,15 @@ export class BattleScene extends Phaser.Scene {
     const s = getSheet(this.remoteCharacterId)
     if (!s.isAnimated) return
     const pfx = s.prefix
+    const currentAnim = this.remotePlayer.anims.currentAnim?.key ?? ""
     if (Math.abs(this.remoteVX) > 10) {
-      const walkAnim = !this.remotePlayer.flipX ? `${pfx}-walk-right` : `${pfx}-walk-left`
-      if (this.remotePlayer.anims.currentAnim?.key !== walkAnim) this.remotePlayer.play(walkAnim)
+      // Walk: usa remoteFacingLeft para selecionar animação (sprites têm direção própria)
+      const walkAnim = this.remoteFacingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
+      if (currentAnim !== walkAnim) { this.remotePlayer.setFlipX(false); this.remotePlayer.play(walkAnim) }
     } else {
-      if (this.remotePlayer.anims.currentAnim?.key !== `${pfx}-idle`) this.remotePlayer.play(`${pfx}-idle`)
+      // Idle: espelha lógica local — setFlipX(!facingLeft) para sprite left-facing por padrão
+      this.remotePlayer.setFlipX(!this.remoteFacingLeft)
+      if (currentAnim !== `${pfx}-idle`) this.remotePlayer.play(`${pfx}-idle`)
     }
   }
 
@@ -759,18 +759,12 @@ export class BattleScene extends Phaser.Scene {
 
     const dmgText = this.add
       .text(bot.sprite.x, bot.sprite.y - 20, `-${damage}`, {
-        fontSize: "14px",
-        color: "#ef4444",
-        fontFamily: "monospace",
-        fontStyle: "bold",
+        fontSize: "14px", color: "#ef4444", fontFamily: "monospace", fontStyle: "bold",
       })
       .setOrigin(0.5)
       .setDepth(20)
     this.tweens.add({
-      targets: dmgText,
-      y: dmgText.y - 30,
-      alpha: 0,
-      duration: 600,
+      targets: dmgText, y: dmgText.y - 30, alpha: 0, duration: 600,
       onComplete: () => dmgText.destroy(),
     })
 
@@ -788,8 +782,7 @@ export class BattleScene extends Phaser.Scene {
 
     this.tweens.add({
       targets: [bot.sprite, bot.nameLabel],
-      alpha: 0,
-      duration: 500,
+      alpha: 0, duration: 500,
       onComplete: () => {
         bot.sprite.destroy()
         bot.nameLabel.destroy()
@@ -801,10 +794,7 @@ export class BattleScene extends Phaser.Scene {
     const aliveBots = this.bots.filter((b) => b.alive)
     if (aliveBots.length === 0) {
       this.time.delayedCall(800, () => {
-        this.scene.start("ResultScene", {
-          winner: this.nickname,
-          characterId: this.characterId,
-        })
+        this.scene.start("ResultScene", { winner: this.nickname, characterId: this.characterId })
       })
     }
   }
@@ -814,18 +804,12 @@ export class BattleScene extends Phaser.Scene {
     const H = this.scale.height
 
     const flash = this.add.sprite(W / 2, H / 2, "bw-flash-skill")
-    const scale = Math.max(W, H) / 128 * 1.2
-    flash.setScale(scale)
+    flash.setScale(Math.max(W, H) / 128 * 1.2)
     flash.setDepth(50)
     flash.setScrollFactor(0)
     flash.play("bw-flash-skill")
     flash.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
-      this.tweens.add({
-        targets: flash,
-        alpha: 0,
-        duration: 200,
-        onComplete: () => flash.destroy(),
-      })
+      this.tweens.add({ targets: flash, alpha: 0, duration: 200, onComplete: () => flash.destroy() })
     })
 
     for (const bot of this.bots) {
@@ -838,11 +822,13 @@ export class BattleScene extends Phaser.Scene {
 
   private spawnProjectile(facingLeft: boolean) {
     const dir = facingLeft ? -1 : 1
-    const spawnX = this.player.x + dir * 60
-    const spawnY = this.player.y - 10
     const side = facingLeft ? "left" : "right"
 
-    const proj = this.physics.add.sprite(spawnX, spawnY, `dioupe-power-${side}`)
+    const proj = this.physics.add.sprite(
+      this.player.x + dir * 60,
+      this.player.y - 10,
+      `dioupe-power-${side}`
+    )
     proj.setScale(0.75)
     proj.setDepth(9)
     this.projectiles.add(proj)
@@ -874,10 +860,15 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private doAbility() {
+    // Invalida safeties pendentes de J/K para não interromper o especial
+    ++this.attackSafetyId
+    const myId = this.attackSafetyId
+
     const { prefix: pfx, specialType } = this.sheet
     switch (specialType) {
       case "flash-stun": {
         this.isAttacking = true
+        this.isUsingAbility = true
         const facing = this.facingLeft
         const anim = facing ? `${pfx}-special-left` : `${pfx}-special-right`
         this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
@@ -885,15 +876,19 @@ export class BattleScene extends Phaser.Scene {
         this.player.setFlipX(false)
         const finish = () => {
           this.isAttacking = false
+          this.isUsingAbility = false
           this.triggerBWFlash()
           this.recoveryTimer = ATTACK_DATA.special.recovery
         }
         this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finish)
-        this.time.delayedCall(3000, () => { if (this.isAttacking) finish() })
+        this.time.delayedCall(3000, () => {
+          if (this.isAttacking && this.attackSafetyId === myId) finish()
+        })
         break
       }
       case "projectile": {
         this.isAttacking = true
+        this.isUsingAbility = true
         const facingLeft = this.facingLeft
         const anim = facingLeft ? `${pfx}-special-left` : `${pfx}-special-right`
         this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
@@ -902,10 +897,13 @@ export class BattleScene extends Phaser.Scene {
         const finish = () => {
           this.spawnProjectile(facingLeft)
           this.isAttacking = false
+          this.isUsingAbility = false
           this.recoveryTimer = ATTACK_DATA.special.recovery
         }
         this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finish)
-        this.time.delayedCall(3000, () => { if (this.isAttacking) finish() })
+        this.time.delayedCall(3000, () => {
+          if (this.isAttacking && this.attackSafetyId === myId) finish()
+        })
         break
       }
       case "teleport": {
