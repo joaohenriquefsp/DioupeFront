@@ -876,7 +876,7 @@ export class BattleScene extends Phaser.Scene {
     proj.setDepth(9)
     this.projectiles.add(proj)
     proj.body.setAllowGravity(false)
-    proj.body.setVelocityX(dir * 180)
+    proj.body.setVelocityX(dir * 45)
     proj.body.setVelocityY(0)
 
     proj.play(`dioupe-power-${side}-intro`)
