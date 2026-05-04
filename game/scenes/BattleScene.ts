@@ -581,7 +581,17 @@ export class BattleScene extends Phaser.Scene {
     // L — Especial (recovery não bloqueia)
     this.abilityCooldown = Math.max(0, this.abilityCooldown - delta)
     if (Phaser.Input.Keyboard.JustDown(this.keyL) && this.abilityCooldown === 0 && !this.isAttacking) {
-      if (this.online) getActiveRoom()?.send("attack", { type: "special", facingRight: !this.facingLeft })
+      if (this.online) {
+        const room = getActiveRoom()
+        if (this.sheet.specialType === "projectile") {
+          // Projétil: dano real no servidor
+          room?.send("attack", { type: "special", facingRight: !this.facingLeft })
+        } else if (this.sheet.specialType === "flash-stun") {
+          // Stun: sem dano — só anima o inimigo
+          room?.send("specialAnim", { facingRight: !this.facingLeft })
+        }
+        // teleport / super-jump / shield: efeito local, sem servidor
+      }
       this.doAbility()
       this.abilityCooldown = this.abilityMaxCooldown
       this.emitHUD()
