@@ -6,22 +6,30 @@ import { getActiveRoom, clearActiveRoom } from "../../lib/gameRoom"
 const SPEED = 200
 const JUMP_VY = -500
 const DOUBLE_JUMP_VY = -440
-const ATTACK_RANGE_X = 65
-const ATTACK_RANGE_Y = 60
-const ATTACK_DAMAGE = 20
 const ATTACK_COOLDOWN = 400
 const BOT_SPEED = 110
 const GRAVITY_EXTRA = 700
 const SHOW_ATTACK_FX = process.env.NODE_ENV === "development"
 
-// Combat mechanics (Dota-style)
-const TURN_DELAY = 180           // ms to turn before attacking opposite direction
-const TURN_MOVE_DELAY = 80       // ms to turn when changing movement direction
-const ATTACK_FPS = 12
-const ATTACK_TOTAL_FRAMES = 6
-const ATTACK_POINT_FRAME = 1     // frame 1 de 4 = pico do swing do bastão
-const ATTACK_POINT_MS = (ATTACK_POINT_FRAME / ATTACK_FPS) * 1000
-const ALLOW_BACKSWING_CANCEL = true
+// Frame data — baseado nos sprites a 7fps
+const ATTACK_FPS = 7
+const ATTACK_POINT_FRAME = 1
+const ATTACK_POINT_MS = (ATTACK_POINT_FRAME / ATTACK_FPS) * 1000  // ~143ms
+
+interface AttackData {
+  startup: number   // ms até a janela de hit abrir
+  damage: number
+  rangeX: number
+  rangeY: number
+  recovery: number  // ms bloqueado após animação completar (recovery frames)
+}
+
+// Startup/active/recovery por ataque — igual online e solo
+const ATTACK_DATA: Record<"basic" | "strong" | "special", AttackData> = {
+  basic:  { startup: ATTACK_POINT_MS,      damage: 20, rangeX: 65,   rangeY: 60,   recovery: 220 },
+  strong: { startup: ATTACK_POINT_MS + 60, damage: 35, rangeX: 80,   rangeY: 80,   recovery: 380 },
+  special:{ startup: 0,                    damage: 60, rangeX: 9999, rangeY: 9999, recovery: 0 },
+}
 
 interface HUDData {
   hp: number
@@ -56,11 +64,11 @@ export class BattleScene extends Phaser.Scene {
   private keyJ!: Phaser.Input.Keyboard.Key
   private keyK!: Phaser.Input.Keyboard.Key
   private keyL!: Phaser.Input.Keyboard.Key
-  private attack2Cooldown = 0
 
   private jumpCount = 0
   private readonly MAX_JUMPS = 2
   private attackCooldown = 0
+  private attack2Cooldown = 0
   private abilityCooldown = 0
   private abilityMaxCooldown = 5000
   private shielded = false
@@ -72,12 +80,11 @@ export class BattleScene extends Phaser.Scene {
   private nickname = "Player"
   private facingLeft = false
 
-  // Combat state
+  // Estado de combate
   private isAttacking = false
-  private isTurning = false
-  private turnMoveTimer = 0       // remaining ms of movement turn delay
-  private attackCooldownDamage = 0
-  private comboQueued = false
+  private recoveryTimer = 0                          // ms bloqueado após ataque
+  private queuedAttack: "basic" | "strong" | null = null  // input buffer
+  private hitBotsThisAttack = new Set<Bot>()         // evita double-hit
 
   private nameLabel!: Phaser.GameObjects.Text
   private bots: Bot[] = []
@@ -171,6 +178,7 @@ export class BattleScene extends Phaser.Scene {
     reg("bw-special-left",  "bw-special-left",  3, 6,  false)
     reg("bw-special-right", "bw-special-right", 3, 6,  false)
     reg("bw-flash-skill",   "bw-flash-skill",   3, 8,  false)
+
     const regFrames = (key: string, tex: string, frames: number[], fps: number, loop: boolean) => {
       if (!this.anims.exists(key))
         this.anims.create({ key, frames: this.anims.generateFrameNumbers(tex, { frames }), frameRate: fps, repeat: loop ? -1 : 0 })
@@ -198,7 +206,6 @@ export class BattleScene extends Phaser.Scene {
 
     this.buildLevel(W, H)
 
-    // Player
     const spawnX = W / 2
     const spawnY = H - 120
     const playerTexture = this.sheet.isAnimated
@@ -223,10 +230,8 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(11)
 
     this.physics.add.collider(this.player, this.platforms)
-
     this.projectiles = this.physics.add.group()
 
-    // Bots (apenas no modo solo)
     if (!this.online) this.spawnBots(W, H)
 
     this.cursors = this.input.keyboard!.createCursorKeys()
@@ -248,7 +253,7 @@ export class BattleScene extends Phaser.Scene {
     if (!room) return
 
     this.syncTimer += delta
-    if (this.syncTimer >= 50) {  // 20fps
+    if (this.syncTimer >= 50) {
       this.syncTimer = 0
       room.send("position", { x: this.player.x, y: this.player.y })
       room.send("move", {
@@ -291,7 +296,6 @@ export class BattleScene extends Phaser.Scene {
 
     const myId = room.sessionId
 
-    // Sprite puro — sem physics body, sem gravidade, sem colisão → zero jitter
     this.remotePlayer = this.add.sprite(W / 2 + 100, H - 120, "char-dioupe")
     this.remotePlayer.setDepth(10)
     this.remotePlayer.setVisible(false)
@@ -304,7 +308,6 @@ export class BattleScene extends Phaser.Scene {
     this.remoteHPBarBg = this.add.graphics().setDepth(12)
     this.remoteHPBar   = this.add.graphics().setDepth(13)
 
-    // Aplica textura do adversário uma única vez lendo o estado atual
     const initState = (room as any).state
     if (initState?.players) {
       initState.players.forEach((player: any, sessionId: string) => {
@@ -320,7 +323,6 @@ export class BattleScene extends Phaser.Scene {
       })
     }
 
-    // Recebe estado do servidor — apenas posição e HP
     room.onStateChange((state: any) => {
       state.players.forEach((player: any, sessionId: string) => {
         if (sessionId === myId) {
@@ -341,7 +343,6 @@ export class BattleScene extends Phaser.Scene {
 
         this.remotePlayer.setFlipX(!player.facingRight)
         this.remoteNameLabel?.setText(player.nickname)
-        // Apenas armazena destino — lerp acontece em updateRemotePos() a 60fps
         this.remoteTargetX = player.x
         this.remoteTargetY = player.y
 
@@ -359,7 +360,6 @@ export class BattleScene extends Phaser.Scene {
       })
     })
 
-    // Animação de ataque do adversário
     room.onMessage("remoteAttack", (data: { sessionId: string; type: string; facingRight: boolean }) => {
       if (!this.remotePlayer?.visible) return
       const s = getSheet(this.remoteCharacterId)
@@ -394,10 +394,8 @@ export class BattleScene extends Phaser.Scene {
       this.time.delayedCall(1500, () => { if (this.remoteIsAttacking) finishRemoteAtk() })
     })
 
-    // Adversário eliminado
     room.onMessage("playerEliminated", (data: { id: string; nickname: string }) => {
       if (data.id !== myId) {
-        // Você ganhou
         this.time.delayedCall(800, () => {
           clearActiveRoom()
           this.scene.start("ResultScene", { winner: this.nickname, characterId: this.characterId })
@@ -405,7 +403,6 @@ export class BattleScene extends Phaser.Scene {
       }
     })
 
-    // Fim de jogo
     room.onMessage("gameOver", (data: { winner: string; characterId: string }) => {
       clearActiveRoom()
       this.time.delayedCall(800, () => {
@@ -478,47 +475,37 @@ export class BattleScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number) {
-    // Capa delta a 50ms: evita física explodindo quando RAF é throttleado em background
     delta = Math.min(delta, 50)
 
     const body = this.player.body
     const onGround = body.blocked.down
     if (onGround) this.jumpCount = 0
 
-    const nameLabelOffset = this.sheet.nameLabelOffset
+    this.nameLabel.setPosition(this.player.x, this.player.y - this.sheet.nameLabelOffset)
 
-    this.nameLabel.setPosition(this.player.x, this.player.y - nameLabelOffset)
-
-    const left = this.cursors.left.isDown || this.keyA.isDown
+    const left  = this.cursors.left.isDown  || this.keyA.isDown
     const right = this.cursors.right.isDown || this.keyD.isDown
 
-    // Turn move delay — micro-delay ao mudar direção no chão
-    if (this.turnMoveTimer > 0) {
-      this.turnMoveTimer = Math.max(0, this.turnMoveTimer - delta)
-      body.setVelocityX(body.velocity.x * 0.6)
-    } else if (!this.isAttacking && !this.isTurning) {
-      const { isAnimated, prefix: pfx } = this.sheet
+    // Movimento — bloqueado durante animação de ataque
+    if (!this.isAttacking) {
+      const { isAnimated } = this.sheet
       if (left) {
-        if (isAnimated && !this.facingLeft) {
-          this.facingLeft = true
-          this.turnMoveTimer = TURN_MOVE_DELAY
-        } else if (!isAnimated) this.player.setFlipX(true)
+        if (isAnimated) this.facingLeft = true
+        else this.player.setFlipX(true)
         body.setVelocityX(-SPEED)
       } else if (right) {
-        if (isAnimated && this.facingLeft) {
-          this.facingLeft = false
-          this.turnMoveTimer = TURN_MOVE_DELAY
-        } else if (!isAnimated) this.player.setFlipX(false)
+        if (isAnimated) this.facingLeft = false
+        else this.player.setFlipX(false)
         body.setVelocityX(SPEED)
       } else {
         body.setVelocityX(body.velocity.x * 0.75)
       }
-      if (isAnimated && !this.isAttacking) this.player.setFlipX(false)
+      if (isAnimated) this.player.setFlipX(false)
     }
 
-    // Sprite animation
+    // Animação idle/walk
     const { isAnimated, prefix: pfx } = this.sheet
-    if (isAnimated && !this.isTurning && !this.isAttacking) {
+    if (isAnimated && !this.isAttacking && this.recoveryTimer === 0) {
       const moving = left || right
       const currentAnim = this.player.anims.currentAnim?.key ?? ""
       if (moving) {
@@ -540,26 +527,49 @@ export class BattleScene extends Phaser.Scene {
       this.jumpCount++
     }
 
-    // J — Ataque básico
-    this.attackCooldown = Math.max(0, this.attackCooldown - delta)
-    if (Phaser.Input.Keyboard.JustDown(this.keyJ) && !this.isAttacking && !this.isTurning && this.attackCooldown === 0) {
-      if (this.online) getActiveRoom()?.send("attack", { type: "basic", facingRight: !this.facingLeft })
-      this.doAttack()
-      this.attackCooldown = ATTACK_COOLDOWN
+    // Recovery timer — bloqueia ataques, aceita input buffer
+    if (this.recoveryTimer > 0) {
+      this.recoveryTimer = Math.max(0, this.recoveryTimer - delta)
+      if (this.recoveryTimer === 0 && this.queuedAttack) {
+        const queued = this.queuedAttack
+        this.queuedAttack = null
+        this.triggerAttack(queued)
+        if (queued === "basic") this.attackCooldown = ATTACK_COOLDOWN
+        else this.attack2Cooldown = 800
+      }
     }
 
-    // K — Golpe forte (não bloqueia se J estiver animando — permite interromper)
+    // J — Ataque básico
+    this.attackCooldown = Math.max(0, this.attackCooldown - delta)
+    if (Phaser.Input.Keyboard.JustDown(this.keyJ) && !this.isAttacking && this.attackCooldown === 0) {
+      if (this.recoveryTimer > 0) {
+        this.queuedAttack = "basic"
+      } else {
+        this.triggerAttack("basic")
+        this.attackCooldown = ATTACK_COOLDOWN
+      }
+    }
+
+    // K — Golpe forte (pode cancelar J ou enfileirar durante recovery)
     this.attack2Cooldown = Math.max(0, this.attack2Cooldown - delta)
     if (Phaser.Input.Keyboard.JustDown(this.keyK) && this.attack2Cooldown === 0) {
-      if (this.online) getActiveRoom()?.send("attack", { type: "strong", facingRight: !this.facingLeft })
-      this.isAttacking = false  // cancela J se estiver animando
-      this.doAttack2()
-      this.attack2Cooldown = 800
+      if (this.isAttacking) {
+        // Cancela J — SF-style cancel
+        this.isAttacking = false
+        this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
+        this.triggerAttack("strong")
+        this.attack2Cooldown = 800
+      } else if (this.recoveryTimer > 0) {
+        this.queuedAttack = "strong"
+      } else {
+        this.triggerAttack("strong")
+        this.attack2Cooldown = 800
+      }
     }
 
     // L — Especial
     this.abilityCooldown = Math.max(0, this.abilityCooldown - delta)
-    if (Phaser.Input.Keyboard.JustDown(this.keyL) && this.abilityCooldown === 0 && !this.isAttacking) {
+    if (Phaser.Input.Keyboard.JustDown(this.keyL) && this.abilityCooldown === 0 && !this.isAttacking && this.recoveryTimer === 0) {
       if (this.online) getActiveRoom()?.send("attack", { type: "special", facingRight: !this.facingLeft })
       this.doAbility()
       this.abilityCooldown = this.abilityMaxCooldown
@@ -574,19 +584,106 @@ export class BattleScene extends Phaser.Scene {
       this.updateRemoteAnim()
     }
 
-    // HP bar do remoto
     if (this.online && this.remotePlayer?.visible) this.drawRemoteHP()
+  }
+
+  // Dispara um ataque com frame data correto — usado por J, K e input buffer
+  private triggerAttack(type: "basic" | "strong") {
+    const data = ATTACK_DATA[type]
+    const { isAnimated, prefix: pfx } = this.sheet
+
+    this.hitBotsThisAttack.clear()
+
+    if (!isAnimated) {
+      // Personagens sem sprite: tint flash + dano imediato + cooldown controla ritmo
+      this.player.setTint(type === "basic" ? 0xffffff : 0xff8800)
+      this.time.delayedCall(80, () => this.player.clearTint())
+      if (this.online) {
+        getActiveRoom()?.send("attack", { type, facingRight: !this.facingLeft })
+      }
+      for (const bot of this.bots) {
+        if (!bot.alive || this.hitBotsThisAttack.has(bot)) continue
+        const dx = Math.abs(bot.sprite.x - this.player.x)
+        const dy = Math.abs(bot.sprite.y - this.player.y)
+        if (dx < data.rangeX && dy < data.rangeY) {
+          this.hitBotsThisAttack.add(bot)
+          this.hitBot(bot, data.damage)
+        }
+      }
+      return
+    }
+
+    // Personagens animados: startup → active → recovery
+    this.isAttacking = true
+
+    let anim: string
+    if (type === "basic") {
+      anim = this.facingLeft ? `${pfx}-attack-left` : `${pfx}-attack-right`
+    } else {
+      anim = `${pfx}-attack2`
+    }
+
+    if (!this.anims.exists(anim)) {
+      this.isAttacking = false
+      return
+    }
+
+    this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
+    this.player.play(anim)
+    this.player.setFlipX(type === "strong" ? this.facingLeft : false)
+
+    // Captura direção no momento do ataque para o delayedCall
+    const capturedFacing = this.facingLeft
+
+    // Janela de hit — startup delay antes do dano (igual online e solo)
+    this.time.delayedCall(data.startup, () => {
+      if (this.online) {
+        getActiveRoom()?.send("attack", { type, facingRight: !capturedFacing })
+      }
+      for (const bot of this.bots) {
+        if (!bot.alive || this.hitBotsThisAttack.has(bot)) continue
+        const dx = Math.abs(bot.sprite.x - this.player.x)
+        const dy = Math.abs(bot.sprite.y - this.player.y)
+        if (dx < data.rangeX && dy < data.rangeY) {
+          this.hitBotsThisAttack.add(bot)
+          this.hitBot(bot, data.damage)
+        }
+      }
+    })
+
+    // Slash visual (dev)
+    if (SHOW_ATTACK_FX) {
+      this.time.delayedCall(data.startup, () => {
+        const dir = capturedFacing ? -1 : 1
+        const slash = this.add.graphics()
+        slash.lineStyle(4, 0xfbbf24, 1)
+        slash.strokeEllipse(this.player.x + dir * 45, this.player.y, 70, 35)
+        slash.setDepth(15)
+        this.time.delayedCall(120, () => slash.destroy())
+      })
+    }
+
+    // Fim da animação → recovery frames
+    const finishAtk = () => {
+      this.isAttacking = false
+      this.player.play(`${pfx}-idle`)
+      this.player.setFlipX(!this.facingLeft)
+      this.recoveryTimer = data.recovery
+    }
+    this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishAtk)
+    // Safety timeout caso ANIMATION_COMPLETE não dispare
+    const safetyMs = type === "basic" ? 1000 : 1200
+    this.time.delayedCall(safetyMs, () => { if (this.isAttacking) finishAtk() })
   }
 
   private updateRemotePos(delta: number) {
     if (!this.remotePlayer?.visible) return
     const dx = this.remoteTargetX - this.remotePlayer.x
     const dy = this.remoteTargetY - this.remotePlayer.y
-    // Snap se muito longe (ex: após minimizar browser — evita corrida do sprite)
     if (Math.abs(dx) > 200 || Math.abs(dy) > 200) {
       this.remotePlayer.setPosition(this.remoteTargetX, this.remoteTargetY)
     } else {
-      const f = Math.min(1, delta * 0.012)  // ~20% por frame a 60fps — suave mas responsivo
+      const f = Math.min(1, delta * 0.012)
       this.remotePlayer.x += dx * f
       this.remotePlayer.y += dy * f
     }
@@ -595,7 +692,7 @@ export class BattleScene extends Phaser.Scene {
 
   private updateRemoteAnim() {
     if (!this.remotePlayer?.visible) return
-    if (this.remoteIsAttacking) return  // não interrompe animação de ataque
+    if (this.remoteIsAttacking) return
     const s = getSheet(this.remoteCharacterId)
     if (!s.isAnimated) return
     const pfx = s.prefix
@@ -613,7 +710,6 @@ export class BattleScene extends Phaser.Scene {
       if (!bot.alive) continue
       const body = bot.sprite.body
 
-      // Stun — paralisa o bot
       if (bot.stunTimer > 0) {
         bot.stunTimer = Math.max(0, bot.stunTimer - delta)
         body.setVelocityX(0)
@@ -622,7 +718,6 @@ export class BattleScene extends Phaser.Scene {
         continue
       }
 
-      // Reverse direction at edges or on timer
       bot.dirTimer -= delta
       if (bot.dirTimer <= 0 || bot.sprite.x <= 20 || bot.sprite.x >= W - 20) {
         bot.direction *= -1
@@ -632,7 +727,6 @@ export class BattleScene extends Phaser.Scene {
       body.setVelocityX(bot.direction * BOT_SPEED)
       bot.sprite.setFlipX(bot.direction < 0)
 
-      // Random jump
       bot.jumpTimer -= delta
       if (bot.jumpTimer <= 0 && body.blocked.down) {
         body.setVelocityY(JUMP_VY)
@@ -645,8 +739,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private drawBotHPBar(bot: Bot) {
-    const barW = 32
-    const barH = 4
+    const barW = 32, barH = 4
     const x = bot.sprite.x - barW / 2
     const y = bot.sprite.y - 30
 
@@ -661,133 +754,9 @@ export class BattleScene extends Phaser.Scene {
     bot.hpBar.fillRect(x, y, barW * pct, barH)
   }
 
-  private doAttack2() {
-    const { isAnimated, prefix: pfx } = this.sheet
-
-    if (!isAnimated) {
-      // Golpe forte para personagens sem sprite animado
-      const dir = this.player.flipX ? -1 : 1
-      this.player.setTint(0xff8800)
-      this.time.delayedCall(150, () => this.player.clearTint())
-      for (const bot of this.bots) {
-        if (!bot.alive) continue
-        const dx = Math.abs(bot.sprite.x - this.player.x)
-        const dy = Math.abs(bot.sprite.y - this.player.y)
-        if (dx < 80 && dy < 80) this.hitBot(bot, 35)
-      }
-      return
-    }
-
-    this.isAttacking = true
-    this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
-    this.player.play(`${pfx}-attack2`)
-    this.player.setFlipX(this.facingLeft)
-    this.time.delayedCall(ATTACK_POINT_MS, () => {
-      this.applyAttackDamage()
-    })
-    const finish2 = () => {
-      this.isAttacking = false
-      this.player.play(`${pfx}-idle`)
-      this.player.setFlipX(!this.facingLeft)
-    }
-    this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finish2)
-    this.time.delayedCall(1200, () => { if (this.isAttacking) finish2() })
-  }
-
-  private doAttack() {
-    if (this.sheet.isAnimated) {
-      const pfx = this.sheet.prefix
-      const wantLeft = this.facingLeft
-      const needsTurn = wantLeft !== this.facingLeft
-
-      const executeAttack = () => {
-        this.isTurning = false
-        this.isAttacking = true
-        const atkAnim = this.facingLeft ? `${pfx}-attack-left` : `${pfx}-attack-right`
-        const hasAnim = this.anims.exists(atkAnim)
-
-        this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
-
-        if (hasAnim) {
-          this.player.play(atkAnim)
-        } else {
-          this.player.setTint(0xffffff)
-          this.time.delayedCall(100, () => this.player.clearTint())
-          this.isAttacking = false
-          return
-        }
-        this.player.setFlipX(false)
-
-        // Dano local em bots (solo) no ponto de impacto
-        this.time.delayedCall(ATTACK_POINT_MS, () => {
-          this.applyAttackDamage()
-        })
-
-        const finishAtk = () => {
-          this.isAttacking = false
-          this.player.play(`${pfx}-idle`)
-          this.player.setFlipX(!this.facingLeft)
-        }
-        this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishAtk)
-        this.time.delayedCall(1000, () => { if (this.isAttacking) finishAtk() })
-      }
-
-      if (needsTurn) {
-        // Turn rate — vira antes de atacar
-        this.isTurning = true
-        this.facingLeft = wantLeft
-        this.time.delayedCall(TURN_DELAY, executeAttack)
-      } else {
-        executeAttack()
-      }
-    } else {
-      this.player.setTint(0xffffff)
-      this.time.delayedCall(80, () => this.player.clearTint())
-    }
-
-    // Slash visual (dev only)
-    if (SHOW_ATTACK_FX) {
-      const dir = (this.sheet.isAnimated ? this.facingLeft : this.player.flipX) ? -1 : 1
-      const slash = this.add.graphics()
-      slash.lineStyle(3, 0xf0f4ff, 0.9)
-      slash.strokeEllipse(this.player.x + dir * 40, this.player.y, 60, 30)
-      slash.setDepth(15)
-      this.time.delayedCall(150, () => slash.destroy())
-    }
-
-    // Dano imediato em bots para personagens não-animados (solo)
-    if (!this.sheet.isAnimated) {
-      for (const bot of this.bots) {
-        if (!bot.alive) continue
-        const dx = Math.abs(bot.sprite.x - this.player.x)
-        const dy = Math.abs(bot.sprite.y - this.player.y)
-        if (dx < ATTACK_RANGE_X && dy < ATTACK_RANGE_Y) this.hitBot(bot, ATTACK_DAMAGE)
-      }
-    }
-  }
-
-  private applyAttackDamage() {
-    if (SHOW_ATTACK_FX) {
-      const dir = this.facingLeft ? -1 : 1
-      const slash = this.add.graphics()
-      slash.lineStyle(4, 0xfbbf24, 1)
-      slash.strokeEllipse(this.player.x + dir * 45, this.player.y, 70, 35)
-      slash.setDepth(15)
-      this.time.delayedCall(120, () => slash.destroy())
-    }
-
-    for (const bot of this.bots) {
-      if (!bot.alive) continue
-      const dx = Math.abs(bot.sprite.x - this.player.x)
-      const dy = Math.abs(bot.sprite.y - this.player.y)
-      if (dx < ATTACK_RANGE_X && dy < ATTACK_RANGE_Y) this.hitBot(bot, ATTACK_DAMAGE)
-    }
-  }
-
   private hitBot(bot: Bot, damage: number) {
     bot.hp = Math.max(0, bot.hp - damage)
 
-    // Floating damage number
     const dmgText = this.add
       .text(bot.sprite.x, bot.sprite.y - 20, `-${damage}`, {
         fontSize: "14px",
@@ -805,11 +774,8 @@ export class BattleScene extends Phaser.Scene {
       onComplete: () => dmgText.destroy(),
     })
 
-    // Knockback
     const kbDir = bot.sprite.x >= this.player.x ? 1 : -1
     bot.sprite.body.setVelocityX(kbDir * 260)
-
-    // Flash red
     bot.sprite.setTint(0xff4444)
     this.time.delayedCall(150, () => bot.sprite.clearTint())
 
@@ -847,7 +813,6 @@ export class BattleScene extends Phaser.Scene {
     const W = this.scale.width
     const H = this.scale.height
 
-    // Sprite de flash centralizado e escalado para cobrir a tela
     const flash = this.add.sprite(W / 2, H / 2, "bw-flash-skill")
     const scale = Math.max(W, H) / 128 * 1.2
     flash.setScale(scale)
@@ -863,7 +828,6 @@ export class BattleScene extends Phaser.Scene {
       })
     })
 
-    // Stun em todos os bots
     for (const bot of this.bots) {
       if (!bot.alive) continue
       bot.stunTimer = 3000
@@ -886,7 +850,6 @@ export class BattleScene extends Phaser.Scene {
     proj.body.setVelocityX(dir * 180)
     proj.body.setVelocityY(0)
 
-    // Intro → travel loop
     proj.play(`dioupe-power-${side}-intro`)
     proj.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
       if (proj.active) proj.play(`dioupe-power-${side}-travel`)
@@ -923,6 +886,7 @@ export class BattleScene extends Phaser.Scene {
         const finish = () => {
           this.isAttacking = false
           this.triggerBWFlash()
+          this.recoveryTimer = ATTACK_DATA.special.recovery
         }
         this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finish)
         this.time.delayedCall(3000, () => { if (this.isAttacking) finish() })
@@ -938,6 +902,7 @@ export class BattleScene extends Phaser.Scene {
         const finish = () => {
           this.spawnProjectile(facingLeft)
           this.isAttacking = false
+          this.recoveryTimer = ATTACK_DATA.special.recovery
         }
         this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finish)
         this.time.delayedCall(3000, () => { if (this.isAttacking) finish() })
