@@ -94,6 +94,9 @@ export class BattleScene extends Phaser.Scene {
   private remoteCharacterId = ""
   private remoteVX = 0
   private syncTimer = 0
+  private remoteTargetX = 0
+  private remoteTargetY = 0
+  private remoteIsAttacking = false
 
   constructor() {
     super({ key: "BattleScene" })
@@ -146,16 +149,16 @@ export class BattleScene extends Phaser.Scene {
   }
 
   create() {
-    const reg = (key: string, tex: string, end: number, fps: number, loop: boolean) => {
+    const reg = (key: string, tex: string, end: number, fps: number, loop: boolean, start = 0) => {
       if (!this.anims.exists(key))
-        this.anims.create({ key, frames: this.anims.generateFrameNumbers(tex, { start: 0, end }), frameRate: fps, repeat: loop ? -1 : 0 })
+        this.anims.create({ key, frames: this.anims.generateFrameNumbers(tex, { start, end }), frameRate: fps, repeat: loop ? -1 : 0 })
     }
     reg("dioupe-idle",          "dioupe-idle",          7, 8,  true)
     reg("dioupe-walk-left",     "dioupe-walk-left",     7, 8,  true)
     reg("dioupe-walk-right",    "dioupe-walk-right",    7, 8,  true)
-    reg("dioupe-attack-right",  "dioupe-attack-right",  3, 7, false)
-    reg("dioupe-attack-left",   "dioupe-attack-left",   3, 7, false)
-    reg("dioupe-attack2",       "dioupe-attack2",       4, 7, false)
+    reg("dioupe-attack-right",  "dioupe-attack-right",  3, 7,  false)
+    reg("dioupe-attack-left",   "dioupe-attack-left",   4, 7,  false, 1)  // frame 0 is transparent
+    reg("dioupe-attack2",       "dioupe-attack2",       4, 7,  false)
     reg("dioupe-special-left",  "dioupe-special-left",  8, 6,  false)
     reg("dioupe-special-right", "dioupe-special-right", 8, 6,  false)
 
@@ -163,7 +166,7 @@ export class BattleScene extends Phaser.Scene {
     reg("bw-walk-left",     "bw-walk-left",     4, 8,  true)
     reg("bw-walk-right",    "bw-walk-right",    4, 8,  true)
     reg("bw-attack-right",  "bw-attack-right",  3, 7,  false)
-    reg("bw-attack-left",   "bw-attack-left",   3, 7,  false)
+    reg("bw-attack-left",   "bw-attack-left",   4, 7,  false, 1)  // frame 0 is transparent
     reg("bw-attack2",       "bw-attack2",       3, 7,  false)
     reg("bw-special-left",  "bw-special-left",  3, 6,  false)
     reg("bw-special-right", "bw-special-right", 3, 6,  false)
@@ -336,13 +339,11 @@ export class BattleScene extends Phaser.Scene {
           this.applyRemoteCharacter(player.characterId)
         }
 
-        const tx = Phaser.Math.Linear(this.remotePlayer.x, player.x, 0.4)
-        const ty = Phaser.Math.Linear(this.remotePlayer.y, player.y, 0.4)
-        this.remotePlayer.setPosition(tx, ty)
         this.remotePlayer.setFlipX(!player.facingRight)
-
-        this.remoteNameLabel?.setPosition(tx, ty - 40)
         this.remoteNameLabel?.setText(player.nickname)
+        // Apenas armazena destino — lerp acontece em updateRemotePos() a 60fps
+        this.remoteTargetX = player.x
+        this.remoteTargetY = player.y
 
         this.remoteHP    = player.hp
         this.remoteMaxHP = player.maxHp
@@ -356,6 +357,41 @@ export class BattleScene extends Phaser.Scene {
           })
         }
       })
+    })
+
+    // Animação de ataque do adversário
+    room.onMessage("remoteAttack", (data: { sessionId: string; type: string; facingRight: boolean }) => {
+      if (!this.remotePlayer?.visible) return
+      const s = getSheet(this.remoteCharacterId)
+      if (!s.isAnimated) return
+      const pfx = s.prefix
+      const facingLeft = !data.facingRight
+
+      let anim: string
+      if (data.type === "strong") {
+        anim = `${pfx}-attack2`
+        this.remotePlayer.setFlipX(facingLeft)
+      } else if (data.type === "special") {
+        anim = facingLeft ? `${pfx}-special-left` : `${pfx}-special-right`
+        this.remotePlayer.setFlipX(false)
+      } else {
+        anim = facingLeft ? `${pfx}-attack-left` : `${pfx}-attack-right`
+        this.remotePlayer.setFlipX(false)
+      }
+
+      if (!this.anims.exists(anim)) return
+      this.remoteIsAttacking = true
+      this.remotePlayer.play(anim)
+
+      const finishRemoteAtk = () => {
+        this.remoteIsAttacking = false
+        if (this.remotePlayer) {
+          this.remotePlayer.play(`${pfx}-idle`)
+          this.remotePlayer.setFlipX(!data.facingRight)
+        }
+      }
+      this.remotePlayer.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishRemoteAtk)
+      this.time.delayedCall(1500, () => { if (this.remoteIsAttacking) finishRemoteAtk() })
     })
 
     // Adversário eliminado
@@ -504,15 +540,16 @@ export class BattleScene extends Phaser.Scene {
     // J — Ataque básico
     this.attackCooldown = Math.max(0, this.attackCooldown - delta)
     if (Phaser.Input.Keyboard.JustDown(this.keyJ) && !this.isAttacking && !this.isTurning && this.attackCooldown === 0) {
-      if (this.online) getActiveRoom()?.send("attack", { type: "basic" })
+      if (this.online) getActiveRoom()?.send("attack", { type: "basic", facingRight: !this.facingLeft })
       this.doAttack()
       this.attackCooldown = ATTACK_COOLDOWN
     }
 
-    // K — Golpe forte
+    // K — Golpe forte (não bloqueia se J estiver animando — permite interromper)
     this.attack2Cooldown = Math.max(0, this.attack2Cooldown - delta)
-    if (Phaser.Input.Keyboard.JustDown(this.keyK) && !this.isAttacking && this.attack2Cooldown === 0) {
-      if (this.online) getActiveRoom()?.send("attack", { type: "strong" })
+    if (Phaser.Input.Keyboard.JustDown(this.keyK) && this.attack2Cooldown === 0) {
+      if (this.online) getActiveRoom()?.send("attack", { type: "strong", facingRight: !this.facingLeft })
+      this.isAttacking = false  // cancela J se estiver animando
       this.doAttack2()
       this.attack2Cooldown = 800
     }
@@ -520,7 +557,7 @@ export class BattleScene extends Phaser.Scene {
     // L — Especial
     this.abilityCooldown = Math.max(0, this.abilityCooldown - delta)
     if (Phaser.Input.Keyboard.JustDown(this.keyL) && this.abilityCooldown === 0 && !this.isAttacking) {
-      if (this.online) getActiveRoom()?.send("attack", { type: "special" })
+      if (this.online) getActiveRoom()?.send("attack", { type: "special", facingRight: !this.facingLeft })
       this.doAbility()
       this.abilityCooldown = this.abilityMaxCooldown
       this.emitHUD()
@@ -530,6 +567,7 @@ export class BattleScene extends Phaser.Scene {
     if (!this.online) this.updateBots(delta)
     if (this.online) {
       this.syncOnline(delta)
+      this.updateRemotePos(delta)
       this.updateRemoteAnim()
     }
 
@@ -537,8 +575,24 @@ export class BattleScene extends Phaser.Scene {
     if (this.online && this.remotePlayer?.visible) this.drawRemoteHP()
   }
 
+  private updateRemotePos(delta: number) {
+    if (!this.remotePlayer?.visible) return
+    const dx = this.remoteTargetX - this.remotePlayer.x
+    const dy = this.remoteTargetY - this.remotePlayer.y
+    // Snap se muito longe (ex: após minimizar browser — evita corrida do sprite)
+    if (Math.abs(dx) > 200 || Math.abs(dy) > 200) {
+      this.remotePlayer.setPosition(this.remoteTargetX, this.remoteTargetY)
+    } else {
+      const f = Math.min(1, delta * 0.012)  // ~20% por frame a 60fps — suave mas responsivo
+      this.remotePlayer.x += dx * f
+      this.remotePlayer.y += dy * f
+    }
+    this.remoteNameLabel?.setPosition(this.remotePlayer.x, this.remotePlayer.y - 40)
+  }
+
   private updateRemoteAnim() {
     if (!this.remotePlayer?.visible) return
+    if (this.remoteIsAttacking) return  // não interrompe animação de ataque
     const s = getSheet(this.remoteCharacterId)
     if (!s.isAnimated) return
     const pfx = s.prefix
