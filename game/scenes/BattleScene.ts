@@ -84,6 +84,7 @@ export class BattleScene extends Phaser.Scene {
   private isUsingAbility = false        // previne K de cancelar especial
   private attackSafetyId = 0           // geração por ataque — invalida safeties antigas
   private recoveryTimer = 0
+  private playerStunTimer = 0          // stun recebido do flash-stun do BW inimigo
   private queuedAttack: "basic" | "strong" | null = null
   private hitBotsThisAttack = new Set<Bot>()
 
@@ -403,8 +404,13 @@ export class BattleScene extends Phaser.Scene {
             const rs = getSheet(this.remoteCharacterId)
             if (rs.specialType === "flash-stun") {
               this.triggerBWFlash()
+              // Stuna o jogador local por 3s
+              this.playerStunTimer = 3000
+              this.player.setTint(0xffdd44)
+              this.time.delayedCall(3000, () => { this.player.clearTint() })
             } else if (rs.specialType === "projectile" && this.remotePlayer) {
-              this.spawnProjectileAt(!data.facingRight, this.remotePlayer.x, this.remotePlayer.y)
+              // Projétil remoto colide com o jogador local (tem physics body)
+              this.spawnProjectileAt(!data.facingRight, this.remotePlayer.x, this.remotePlayer.y, false, this.player)
             }
           }
         }
@@ -497,8 +503,15 @@ export class BattleScene extends Phaser.Scene {
     const left  = this.cursors.left.isDown  || this.keyA.isDown
     const right = this.cursors.right.isDown || this.keyD.isDown
 
-    // Movimento — bloqueado durante animação de ataque
-    if (!this.isAttacking) {
+    // Stun (recebido do flash-stun BW) — bloqueia todos os inputs
+    const isStunned = this.playerStunTimer > 0
+    if (this.playerStunTimer > 0) {
+      this.playerStunTimer = Math.max(0, this.playerStunTimer - delta)
+      body.setVelocityX(body.velocity.x * 0.8)  // desacelera mas não trava fisica
+    }
+
+    // Movimento — bloqueado durante ataque e stun
+    if (!this.isAttacking && !isStunned) {
       const { isAnimated } = this.sheet
       if (left) {
         if (isAnimated) this.facingLeft = true
@@ -514,9 +527,9 @@ export class BattleScene extends Phaser.Scene {
       if (isAnimated) this.player.setFlipX(false)
     }
 
-    // Animação idle/walk — recovery não bloqueia (isAttacking bloqueia durante o golpe)
+    // Animação idle/walk
     const { isAnimated, prefix: pfx } = this.sheet
-    if (isAnimated && !this.isAttacking) {
+    if (isAnimated && !this.isAttacking && !isStunned) {
       const moving = left || right
       const currentAnim = this.player.anims.currentAnim?.key ?? ""
       if (moving) {
@@ -528,12 +541,12 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
-    // Jump
+    // Jump — bloqueado durante stun
     const jumpJustDown =
       Phaser.Input.Keyboard.JustDown(this.cursors.up) ||
       Phaser.Input.Keyboard.JustDown(this.keyW) ||
       Phaser.Input.Keyboard.JustDown(this.keySpace)
-    if (jumpJustDown && this.jumpCount < this.MAX_JUMPS) {
+    if (jumpJustDown && this.jumpCount < this.MAX_JUMPS && !isStunned) {
       body.setVelocityY(this.jumpCount === 0 ? JUMP_VY : DOUBLE_JUMP_VY)
       this.jumpCount++
     }
@@ -550,9 +563,9 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
-    // J — Ataque básico
+    // J — Ataque básico (bloqueado durante stun)
     this.attackCooldown = Math.max(0, this.attackCooldown - delta)
-    if (Phaser.Input.Keyboard.JustDown(this.keyJ) && !this.isAttacking && this.attackCooldown === 0) {
+    if (Phaser.Input.Keyboard.JustDown(this.keyJ) && !this.isAttacking && !isStunned && this.attackCooldown === 0) {
       if (this.recoveryTimer > 0) {
         this.queuedAttack = "basic"
       } else {
@@ -561,9 +574,9 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
-    // K — Golpe forte (cancela J, mas NÃO cancela especial)
+    // K — Golpe forte (bloqueado durante stun)
     this.attack2Cooldown = Math.max(0, this.attack2Cooldown - delta)
-    if (Phaser.Input.Keyboard.JustDown(this.keyK) && this.attack2Cooldown === 0) {
+    if (Phaser.Input.Keyboard.JustDown(this.keyK) && this.attack2Cooldown === 0 && !isStunned) {
       if (this.isAttacking && !this.isUsingAbility) {
         // Cancela J — SF-style cancel
         this.isAttacking = false
@@ -578,9 +591,9 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
-    // L — Especial (recovery não bloqueia)
+    // L — Especial (bloqueado durante stun)
     this.abilityCooldown = Math.max(0, this.abilityCooldown - delta)
-    if (Phaser.Input.Keyboard.JustDown(this.keyL) && this.abilityCooldown === 0 && !this.isAttacking) {
+    if (Phaser.Input.Keyboard.JustDown(this.keyL) && this.abilityCooldown === 0 && !this.isAttacking && !isStunned) {
       if (this.online) {
         const room = getActiveRoom()
         if (this.sheet.specialType === "projectile") {
@@ -839,11 +852,18 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private spawnProjectile(facingLeft: boolean) {
-    this.spawnProjectileAt(facingLeft, this.player.x, this.player.y, true)
+    // Local: colide com bots (solo) ou com remotePlayer via distance check (online)
+    this.spawnProjectileAt(facingLeft, this.player.x, this.player.y, true, null)
   }
 
-  // Cria o projétil a partir de coordenadas arbitrárias (local ou remoto)
-  private spawnProjectileAt(facingLeft: boolean, originX: number, originY: number, withBotHit = false) {
+  // target: null = solo/bots | Sprite = projétil remoto colide com esse sprite (physics)
+  private spawnProjectileAt(
+    facingLeft: boolean,
+    originX: number,
+    originY: number,
+    withBotHit = false,
+    target: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody | null = null
+  ) {
     const dir = facingLeft ? -1 : 1
     const side = facingLeft ? "left" : "right"
 
@@ -864,20 +884,51 @@ export class BattleScene extends Phaser.Scene {
       if (proj.active) proj.play(`dioupe-power-${side}-travel`)
     })
 
+    const playImpact = () => {
+      if (!proj.active) return
+      proj.body.setVelocityX(0)
+      proj.play(`dioupe-power-${side}-impact`)
+      proj.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+        if (proj.active) proj.destroy()
+      })
+    }
+
     if (withBotHit) {
-      const onHit = (bot: Bot) => {
-        if (!proj.active) return
-        proj.body.setVelocityX(0)
-        proj.play(`dioupe-power-${side}-impact`)
-        proj.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
-          if (proj.active) proj.destroy()
-        })
-        this.hitBot(bot, 60)
-      }
+      // Solo: overlap com bots
       for (const bot of this.bots) {
         if (!bot.alive) continue
-        this.physics.add.overlap(proj, bot.sprite, () => onHit(bot))
+        this.physics.add.overlap(proj, bot.sprite, () => {
+          if (!proj.active) return
+          playImpact()
+          this.hitBot(bot, 60)
+        })
       }
+
+      // Online: distance check vs remotePlayer (sem physics body)
+      if (this.online && this.remotePlayer) {
+        const remoteRef = this.remotePlayer
+        const checker = this.time.addEvent({
+          delay: 16,
+          loop: true,
+          callback: () => {
+            if (!proj.active) { checker.destroy(); return }
+            if (!remoteRef.visible) return
+            const dist = Phaser.Math.Distance.Between(proj.x, proj.y, remoteRef.x, remoteRef.y)
+            if (dist < 40) {
+              checker.destroy()
+              playImpact()
+            }
+          },
+        })
+      }
+    }
+
+    // Projétil remoto: target tem physics body → overlap direto
+    if (target) {
+      this.physics.add.overlap(proj, target, () => {
+        if (!proj.active) return
+        playImpact()
+      })
     }
 
     this.time.delayedCall(4000, () => { if (proj.active) proj.destroy() })
