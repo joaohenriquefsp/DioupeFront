@@ -597,8 +597,8 @@ export class BattleScene extends Phaser.Scene {
       if (this.online) {
         const room = getActiveRoom()
         if (this.sheet.specialType === "projectile") {
-          // Projétil: dano real no servidor
-          room?.send("attack", { type: "special", facingRight: !this.facingLeft })
+          // Projétil: só anima o inimigo — dano enviado quando o projétil bater
+          room?.send("specialAnim", { facingRight: !this.facingLeft })
         } else if (this.sheet.specialType === "flash-stun") {
           // Stun: sem dano — só anima o inimigo
           room?.send("specialAnim", { facingRight: !this.facingLeft })
@@ -907,6 +907,7 @@ export class BattleScene extends Phaser.Scene {
       // Online: distance check vs remotePlayer (sem physics body)
       if (this.online && this.remotePlayer) {
         const remoteRef = this.remotePlayer
+        const capturedFacing = facingLeft
         const checker = this.time.addEvent({
           delay: 16,
           loop: true,
@@ -917,6 +918,8 @@ export class BattleScene extends Phaser.Scene {
             if (dist < 40) {
               checker.destroy()
               playImpact()
+              // Dano enviado APENAS quando o projétil bate, não no keypress
+              getActiveRoom()?.send("attack", { type: "special", facingRight: !capturedFacing })
             }
           },
         })
