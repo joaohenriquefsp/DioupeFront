@@ -391,11 +391,11 @@ export class BattleScene extends Phaser.Scene {
         this.remoteTargetX = player.x
         this.remoteTargetY = player.y
 
+        if (player.hp < this.remoteHP) this.remoteHurtTimer = 350
         this.remoteHP    = player.hp
         this.remoteMaxHP = player.maxHp
         this.remoteDead  = !player.alive
         this.remoteVX = player.vx ?? 0
-        if (player.hp < this.remoteHP) this.remoteHurtTimer = 350
         this.remoteVY = player.vy ?? 0
 
         if (!player.alive && !this.remoteDead) {
@@ -598,9 +598,11 @@ export class BattleScene extends Phaser.Scene {
     if (isAnimated) {
       const currentAnim = this.player.anims.currentAnim?.key ?? ""
       const side = this.facingLeft ? "left" : "right"
+      // Hurt: direção baseada em onde está o atacante (remoto) em relação ao player
+      const hurtSide = (this.remotePlayer && this.remotePlayer.x < this.player.x) ? "right" : "left"
 
       if (this.hitStunTimer > 0) {
-        const hurtAnim = `${pfx}-hurt-${side}`
+        const hurtAnim = `${pfx}-hurt-${hurtSide}`
         if (currentAnim !== hurtAnim) {
           this.player.off(Phaser.Animations.Events.ANIMATION_UPDATE)
           this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
@@ -825,17 +827,23 @@ export class BattleScene extends Phaser.Scene {
 
   private updateRemoteAnim() {
     if (!this.remotePlayer?.visible) return
-    if (this.remoteIsAttacking) return
     const s = getSheet(this.remoteCharacterId)
     if (!s.isAnimated) return
     const pfx = s.prefix
     const currentAnim = this.remotePlayer.anims.currentAnim?.key ?? ""
-    const side = this.remoteFacingLeft ? "left" : "right"
 
+    // Hurt tem prioridade sobre tudo — direção baseada em posição relativa ao player local
     if (this.remoteHurtTimer > 0) {
-      const hurtAnim = `${pfx}-hurt-${side}`
+      const hurtSide = this.player.x < this.remotePlayer.x ? "right" : "left"
+      const hurtAnim = `${pfx}-hurt-${hurtSide}`
       if (currentAnim !== hurtAnim) this.remotePlayer.play(hurtAnim)
-    } else if (Math.abs(this.remoteVY) > 50) {
+      return
+    }
+
+    if (this.remoteIsAttacking) return
+
+    const side = this.remoteFacingLeft ? "left" : "right"
+    if (Math.abs(this.remoteVY) > 50) {
       const jumpAnim = `${pfx}-jump-${side}`
       if (currentAnim !== jumpAnim) { this.remotePlayer.setFlipX(false); this.remotePlayer.play(jumpAnim) }
     } else if (Math.abs(this.remoteVX) > 10) {
