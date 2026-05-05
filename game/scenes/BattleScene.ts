@@ -90,6 +90,9 @@ export class BattleScene extends Phaser.Scene {
   private playerStunTimer = 0          // stun recebido do flash-stun do BW inimigo
   private hitStunTimer = 0             // stun ao receber dano
   private isCrouching = false
+  private lastMovementAnim = ""
+  private remoteCrouching = false
+  private lastRemoteMovementAnim = ""
   private queuedAttack: "basic" | "strong" | null = null
   private hitBotsThisAttack = new Set<Bot>()
 
@@ -394,6 +397,7 @@ export class BattleScene extends Phaser.Scene {
         this.remoteTargetY = player.y
 
         if (player.hp < this.remoteHP) this.remoteHurtTimer = 350
+        this.remoteCrouching = player.crouching ?? false
         this.remoteHP    = player.hp
         this.remoteMaxHP = player.maxHp
         this.remoteDead  = !player.alive
@@ -598,17 +602,23 @@ export class BattleScene extends Phaser.Scene {
     // Animação — prioridade: hurt > jump/fall > crouch > walk > idle
     const { isAnimated, prefix: pfx } = this.sheet
     if (isAnimated) {
-      const currentAnim = this.player.anims.currentAnim?.key ?? ""
       const side = this.facingLeft ? "left" : "right"
-      // Hurt: direção baseada em onde está o atacante (remoto) em relação ao player
       const hurtSide = (this.remotePlayer && this.remotePlayer.x < this.player.x) ? "right" : "left"
+
+      const playMovement = (key: string, flipX = false) => {
+        if (this.lastMovementAnim === key) return
+        this.lastMovementAnim = key
+        this.player.setFlipX(flipX)
+        this.player.play(key)
+      }
 
       if (this.hitStunTimer > 0) {
         const hurtAnim = `${pfx}-hurt-${hurtSide}`
-        if (currentAnim !== hurtAnim) {
+        if (this.lastMovementAnim !== hurtAnim) {
           this.player.off(Phaser.Animations.Events.ANIMATION_UPDATE)
           this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
           this.isAttacking = false
+          this.lastMovementAnim = hurtAnim
           this.player.play(hurtAnim)
         }
       } else if (this.isAttacking) {
@@ -616,18 +626,15 @@ export class BattleScene extends Phaser.Scene {
       } else if (!onGround) {
         const falling = body.velocity.y > 0
         const airKey = falling && this.anims.exists(`${pfx}-fall-${side}`) ? `${pfx}-fall-${side}` : `${pfx}-jump-${side}`
-        if (currentAnim !== airKey) { this.player.setFlipX(false); this.player.play(airKey) }
+        playMovement(airKey)
       } else if (this.isCrouching) {
-        const crouchAnim = `${pfx}-crouch-${side}`
-        if (currentAnim !== crouchAnim) { this.player.setFlipX(false); this.player.play(crouchAnim) }
+        playMovement(`${pfx}-crouch-${side}`)
       } else if (!isStunned) {
         const moving = left || right
         if (moving) {
-          const walkAnim = this.facingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
-          if (currentAnim !== walkAnim) { this.player.setFlipX(false); this.player.play(walkAnim) }
+          playMovement(this.facingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`)
         } else {
-          this.player.setFlipX(!this.facingLeft)
-          if (currentAnim !== `${pfx}-idle`) this.player.play(`${pfx}-idle`)
+          playMovement(`${pfx}-idle`, !this.facingLeft)
         }
       }
     }
@@ -720,6 +727,7 @@ export class BattleScene extends Phaser.Scene {
     const { isAnimated, prefix: pfx } = this.sheet
 
     ;(this.player.body as Phaser.Physics.Arcade.Body).setVelocityX(0)
+    this.lastMovementAnim = ""
     this.hitBotsThisAttack.clear()
     this.isUsingAbility = false
     const myId = ++this.attackSafetyId
@@ -833,29 +841,34 @@ export class BattleScene extends Phaser.Scene {
     const s = getSheet(this.remoteCharacterId)
     if (!s.isAnimated) return
     const pfx = s.prefix
-    const currentAnim = this.remotePlayer.anims.currentAnim?.key ?? ""
+    const side = this.remoteFacingLeft ? "left" : "right"
 
-    // Hurt tem prioridade sobre tudo — direção baseada em posição relativa ao player local
+    const playRemote = (key: string, flipX = false) => {
+      if (this.lastRemoteMovementAnim === key) return
+      this.lastRemoteMovementAnim = key
+      this.remotePlayer!.setFlipX(flipX)
+      this.remotePlayer!.play(key)
+    }
+
+    // Hurt tem prioridade sobre tudo
     if (this.remoteHurtTimer > 0) {
       const hurtSide = this.player.x < this.remotePlayer.x ? "right" : "left"
-      const hurtAnim = `${pfx}-hurt-${hurtSide}`
-      if (currentAnim !== hurtAnim) this.remotePlayer.play(hurtAnim)
+      playRemote(`${pfx}-hurt-${hurtSide}`)
       return
     }
 
-    if (this.remoteIsAttacking) return
+    if (this.remoteIsAttacking) { this.lastRemoteMovementAnim = ""; return }
 
-    const side = this.remoteFacingLeft ? "left" : "right"
     if (Math.abs(this.remoteVY) > 50) {
       const falling = this.remoteVY > 0
       const airKey = falling && this.anims.exists(`${pfx}-fall-${side}`) ? `${pfx}-fall-${side}` : `${pfx}-jump-${side}`
-      if (currentAnim !== airKey) { this.remotePlayer.setFlipX(false); this.remotePlayer.play(airKey) }
+      playRemote(airKey)
+    } else if (this.remoteCrouching) {
+      playRemote(`${pfx}-crouch-${side}`)
     } else if (Math.abs(this.remoteVX) > 10) {
-      const walkAnim = this.remoteFacingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
-      if (currentAnim !== walkAnim) { this.remotePlayer.setFlipX(false); this.remotePlayer.play(walkAnim) }
+      playRemote(this.remoteFacingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`)
     } else {
-      this.remotePlayer.setFlipX(!this.remoteFacingLeft)
-      if (currentAnim !== `${pfx}-idle`) this.remotePlayer.play(`${pfx}-idle`)
+      playRemote(`${pfx}-idle`, !this.remoteFacingLeft)
     }
   }
 
@@ -1098,6 +1111,7 @@ export class BattleScene extends Phaser.Scene {
 
   private doAbility() {
     ;(this.player.body as Phaser.Physics.Arcade.Body).setVelocityX(0)
+    this.lastMovementAnim = ""
     // Invalida safeties pendentes de J/K para não interromper o especial
     ++this.attackSafetyId
     const myId = this.attackSafetyId
