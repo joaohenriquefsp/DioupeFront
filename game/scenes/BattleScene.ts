@@ -89,6 +89,7 @@ export class BattleScene extends Phaser.Scene {
   private recoveryTimer = 0
   private playerStunTimer = 0          // stun recebido do flash-stun do BW inimigo
   private hitStunTimer = 0             // stun ao receber dano
+  private isCrouching = false
   private queuedAttack: "basic" | "strong" | null = null
   private hitBotsThisAttack = new Set<Bot>()
 
@@ -147,6 +148,12 @@ export class BattleScene extends Phaser.Scene {
     load("dioupe-special-right",  "special-right.png",  128, 128)
     load("dioupe-power-right",    "power-right.png",    128, 128)
     load("dioupe-power-left",     "power-left.png",     128, 128)
+    load("dioupe-jump-right",     "jump-right.png",     128, 128)
+    load("dioupe-jump-left",      "jump-left.png",      128, 128)
+    load("dioupe-hurt-right",     "hurt-right.png",     128, 128)
+    load("dioupe-hurt-left",      "hurt-left.png",      128, 128)
+    load("dioupe-crouch-right",   "crouch-right.png",   128, 128)
+    load("dioupe-crouch-left",    "crouch-left.png",    128, 128)
 
     const bw = "/assets/sprites/BoletasWolf"
     const loadBW = (key: string, file: string, fw: number) => {
@@ -184,6 +191,12 @@ export class BattleScene extends Phaser.Scene {
     reg("dioupe-attack2",       "dioupe-attack2",       4, 7,  false)
     reg("dioupe-special-left",  "dioupe-special-left",  8, 6,  false)
     reg("dioupe-special-right", "dioupe-special-right", 8, 6,  false)
+    reg("dioupe-jump-right",    "dioupe-jump-right",    4, 8,  false)
+    reg("dioupe-jump-left",     "dioupe-jump-left",     4, 8,  false)
+    reg("dioupe-hurt-right",    "dioupe-hurt-right",    4, 8,  false)
+    reg("dioupe-hurt-left",     "dioupe-hurt-left",     4, 8,  false)
+    reg("dioupe-crouch-right",  "dioupe-crouch-right",  3, 8,  false)
+    reg("dioupe-crouch-left",   "dioupe-crouch-left",   3, 8,  false)
 
     reg("bw-idle",          "bw-idle",          8, 8,  true)
     reg("bw-walk-left",     "bw-walk-left",     4, 8,  true)
@@ -282,6 +295,7 @@ export class BattleScene extends Phaser.Scene {
         vx: this.player.body.velocity.x,
         vy: this.player.body.velocity.y,
         facingRight: !this.facingLeft,
+        crouching: this.isCrouching,
       })
     }
   }
@@ -549,10 +563,25 @@ export class BattleScene extends Phaser.Scene {
     const isStunned = this.playerStunTimer > 0 || this.hitStunTimer > 0
 
     const down = this.cursors.down.isDown || this.keyS.isDown
-    const isCrouching = down && onGround && !this.isAttacking && !isStunned
+    const wasCrouching = this.isCrouching
+    this.isCrouching = down && onGround && !this.isAttacking && !isStunned
+
+    // Ajusta hitbox ao agachar/levantar
+    if (this.isCrouching !== wasCrouching) {
+      const s = this.sheet
+      if (this.isCrouching) {
+        body.setSize(s.bodyW, s.bodyH / 2)
+        body.setOffset(s.offsetX, s.offsetY + s.bodyH / 2)
+      } else {
+        body.setSize(s.bodyW, s.bodyH)
+        body.setOffset(s.offsetX, s.offsetY)
+      }
+    }
 
     // Movimento — bloqueado durante ataque, stun e agachamento
-    if (!this.isAttacking && !isStunned && !isCrouching) {
+    if (this.isCrouching) {
+      body.setVelocityX(body.velocity.x * 0.75)
+    } else if (!this.isAttacking && !isStunned) {
       const { isAnimated } = this.sheet
       if (left) {
         if (isAnimated) this.facingLeft = true
@@ -580,7 +609,7 @@ export class BattleScene extends Phaser.Scene {
       } else if (!onGround) {
         const jumpAnim = `${pfx}-jump-${side}`
         if (currentAnim !== jumpAnim) { this.player.setFlipX(false); this.player.play(jumpAnim) }
-      } else if (isCrouching) {
+      } else if (this.isCrouching) {
         const crouchAnim = `${pfx}-crouch-${side}`
         if (currentAnim !== crouchAnim) { this.player.setFlipX(false); this.player.play(crouchAnim) }
       } else if (!isStunned) {
@@ -600,7 +629,7 @@ export class BattleScene extends Phaser.Scene {
       Phaser.Input.Keyboard.JustDown(this.cursors.up) ||
       Phaser.Input.Keyboard.JustDown(this.keyW) ||
       Phaser.Input.Keyboard.JustDown(this.keySpace)
-    if (jumpJustDown && this.jumpCount < this.MAX_JUMPS && !isStunned) {
+    if (jumpJustDown && this.jumpCount < this.MAX_JUMPS && !isStunned && !this.isCrouching) {
       body.setVelocityY(this.jumpCount === 0 ? JUMP_VY : DOUBLE_JUMP_VY)
       this.jumpCount++
     }
