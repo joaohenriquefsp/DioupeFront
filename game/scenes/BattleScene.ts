@@ -39,6 +39,8 @@ interface HUDData {
 
 interface Bot {
   sprite: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody
+  characterId: string
+  sheet: CharacterSheet
   hp: number
   maxHp: number
   color: number
@@ -59,6 +61,7 @@ export class BattleScene extends Phaser.Scene {
   private keyA!: Phaser.Input.Keyboard.Key
   private keyD!: Phaser.Input.Keyboard.Key
   private keyW!: Phaser.Input.Keyboard.Key
+  private keyS!: Phaser.Input.Keyboard.Key
   private keySpace!: Phaser.Input.Keyboard.Key
   private keyJ!: Phaser.Input.Keyboard.Key
   private keyK!: Phaser.Input.Keyboard.Key
@@ -85,6 +88,7 @@ export class BattleScene extends Phaser.Scene {
   private attackSafetyId = 0           // geração por ataque — invalida safeties antigas
   private recoveryTimer = 0
   private playerStunTimer = 0          // stun recebido do flash-stun do BW inimigo
+  private hitStunTimer = 0             // stun ao receber dano
   private queuedAttack: "basic" | "strong" | null = null
   private hitBotsThisAttack = new Set<Bot>()
 
@@ -102,6 +106,8 @@ export class BattleScene extends Phaser.Scene {
   private remoteDead = false
   private remoteCharacterId = ""
   private remoteVX = 0
+  private remoteVY = 0
+  private remoteHurtTimer = 0
   private remoteFacingLeft = false     // direção real do remoto (separada do flipX)
   private syncTimer = 0
   private remoteTargetX = 0
@@ -252,6 +258,7 @@ export class BattleScene extends Phaser.Scene {
     this.keyA = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A)
     this.keyD = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D)
     this.keyW = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W)
+    this.keyS     = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.S)
     this.keySpace = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE)
     this.keyJ = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.J)
     this.keyK = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.K)
@@ -346,6 +353,13 @@ export class BattleScene extends Phaser.Scene {
     room.onStateChange((state: any) => {
       state.players.forEach((player: any, sessionId: string) => {
         if (sessionId === myId) {
+          if (player.hp < this.hp) {
+            this.hitStunTimer = 350
+            if (this.sheet.isAnimated) {
+              const side = this.facingLeft ? "left" : "right"
+              this.player.play(`${this.sheet.prefix}-hurt-${side}`)
+            }
+          }
           if (player.hp !== this.hp) { this.hp = player.hp; this.emitHUD() }
           return
         }
@@ -370,7 +384,9 @@ export class BattleScene extends Phaser.Scene {
         this.remoteHP    = player.hp
         this.remoteMaxHP = player.maxHp
         this.remoteDead  = !player.alive
-        this.remoteVX    = player.vx ?? 0
+        this.remoteVX = player.vx ?? 0
+        if (player.hp < this.remoteHP) this.remoteHurtTimer = 350
+        this.remoteVY = player.vy ?? 0
 
         if (!player.alive && !this.remoteDead) {
           this.tweens.add({
@@ -458,14 +474,20 @@ export class BattleScene extends Phaser.Scene {
 
     botChars.forEach((char, i) => {
       const { x, y } = spawnPoints[i]
-      const sprite = this.physics.add.sprite(x, y, `char-${char.id}`)
+      const sheet = getSheet(char.id)
+      const tex = sheet.isAnimated ? `${sheet.prefix}-idle` : `char-${char.id}`
+      const sprite = this.physics.add.sprite(x, y, tex)
       sprite.setCollideWorldBounds(true)
       sprite.body.setGravityY(GRAVITY_EXTRA)
       sprite.setDepth(10)
+      sprite.setScale(sheet.scale)
+      sprite.body.setSize(sheet.bodyW, sheet.bodyH)
+      sprite.body.setOffset(sheet.offsetX, sheet.offsetY)
+      if (sheet.isAnimated) sprite.play(`${sheet.prefix}-idle`)
       this.physics.add.collider(sprite, this.platforms)
 
       const nameLabel = this.add
-        .text(x, y - 36, char.name, {
+        .text(x, y - sheet.nameLabelOffset, char.name, {
           fontSize: "11px", color: "#f0f4ff", fontFamily: "monospace",
         })
         .setOrigin(0.5)
@@ -475,7 +497,8 @@ export class BattleScene extends Phaser.Scene {
       const hpBar = this.add.graphics().setDepth(13)
 
       this.bots.push({
-        sprite, hp: char.hp, maxHp: char.hp, color: char.color,
+        sprite, characterId: char.id, sheet,
+        hp: char.hp, maxHp: char.hp, color: char.color,
         nameLabel, hpBarBg, hpBar,
         direction: i % 2 === 0 ? 1 : -1,
         dirTimer: 2000 + Math.random() * 1500,
@@ -515,15 +538,21 @@ export class BattleScene extends Phaser.Scene {
     const left  = this.cursors.left.isDown  || this.keyA.isDown
     const right = this.cursors.right.isDown || this.keyD.isDown
 
-    // Stun (recebido do flash-stun BW) — bloqueia todos os inputs
-    const isStunned = this.playerStunTimer > 0
+    // Stun — flash-stun do BW ou hitstun ao receber dano
     if (this.playerStunTimer > 0) {
       this.playerStunTimer = Math.max(0, this.playerStunTimer - delta)
-      body.setVelocityX(body.velocity.x * 0.8)  // desacelera mas não trava fisica
+      body.setVelocityX(body.velocity.x * 0.8)
     }
+    if (this.hitStunTimer > 0) {
+      this.hitStunTimer = Math.max(0, this.hitStunTimer - delta)
+    }
+    const isStunned = this.playerStunTimer > 0 || this.hitStunTimer > 0
 
-    // Movimento — bloqueado durante ataque e stun
-    if (!this.isAttacking && !isStunned) {
+    const down = this.cursors.down.isDown || this.keyS.isDown
+    const isCrouching = down && onGround && !this.isAttacking && !isStunned
+
+    // Movimento — bloqueado durante ataque, stun e agachamento
+    if (!this.isAttacking && !isStunned && !isCrouching) {
       const { isAnimated } = this.sheet
       if (left) {
         if (isAnimated) this.facingLeft = true
@@ -539,17 +568,30 @@ export class BattleScene extends Phaser.Scene {
       if (isAnimated) this.player.setFlipX(false)
     }
 
-    // Animação idle/walk
+    // Animação — prioridade: hurt > jump/fall > crouch > walk > idle
     const { isAnimated, prefix: pfx } = this.sheet
-    if (isAnimated && !this.isAttacking && !isStunned) {
-      const moving = left || right
+    if (isAnimated && !this.isAttacking) {
       const currentAnim = this.player.anims.currentAnim?.key ?? ""
-      if (moving) {
-        const walkAnim = this.facingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
-        if (currentAnim !== walkAnim) { this.player.setFlipX(false); this.player.play(walkAnim) }
-      } else {
-        this.player.setFlipX(!this.facingLeft)
-        if (currentAnim !== `${pfx}-idle`) this.player.play(`${pfx}-idle`)
+      const side = this.facingLeft ? "left" : "right"
+
+      if (this.hitStunTimer > 0) {
+        const hurtAnim = `${pfx}-hurt-${side}`
+        if (currentAnim !== hurtAnim) this.player.play(hurtAnim)
+      } else if (!onGround) {
+        const jumpAnim = `${pfx}-jump-${side}`
+        if (currentAnim !== jumpAnim) { this.player.setFlipX(false); this.player.play(jumpAnim) }
+      } else if (isCrouching) {
+        const crouchAnim = `${pfx}-crouch-${side}`
+        if (currentAnim !== crouchAnim) { this.player.setFlipX(false); this.player.play(crouchAnim) }
+      } else if (!isStunned) {
+        const moving = left || right
+        if (moving) {
+          const walkAnim = this.facingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
+          if (currentAnim !== walkAnim) { this.player.setFlipX(false); this.player.play(walkAnim) }
+        } else {
+          this.player.setFlipX(!this.facingLeft)
+          if (currentAnim !== `${pfx}-idle`) this.player.play(`${pfx}-idle`)
+        }
       }
     }
 
@@ -622,6 +664,8 @@ export class BattleScene extends Phaser.Scene {
       this.emitHUD()
     }
     if (this.abilityCooldown > 0) this.emitHUD()
+
+    if (this.remoteHurtTimer > 0) this.remoteHurtTimer = Math.max(0, this.remoteHurtTimer - delta)
 
     if (!this.online) this.updateBots(delta)
     if (this.online) {
@@ -752,12 +796,18 @@ export class BattleScene extends Phaser.Scene {
     if (!s.isAnimated) return
     const pfx = s.prefix
     const currentAnim = this.remotePlayer.anims.currentAnim?.key ?? ""
-    if (Math.abs(this.remoteVX) > 10) {
-      // Walk: usa remoteFacingLeft para selecionar animação (sprites têm direção própria)
+    const side = this.remoteFacingLeft ? "left" : "right"
+
+    if (this.remoteHurtTimer > 0) {
+      const hurtAnim = `${pfx}-hurt-${side}`
+      if (currentAnim !== hurtAnim) this.remotePlayer.play(hurtAnim)
+    } else if (Math.abs(this.remoteVY) > 50) {
+      const jumpAnim = `${pfx}-jump-${side}`
+      if (currentAnim !== jumpAnim) { this.remotePlayer.setFlipX(false); this.remotePlayer.play(jumpAnim) }
+    } else if (Math.abs(this.remoteVX) > 10) {
       const walkAnim = this.remoteFacingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
       if (currentAnim !== walkAnim) { this.remotePlayer.setFlipX(false); this.remotePlayer.play(walkAnim) }
     } else {
-      // Idle: espelha lógica local — setFlipX(!facingLeft) para sprite left-facing por padrão
       this.remotePlayer.setFlipX(!this.remoteFacingLeft)
       if (currentAnim !== `${pfx}-idle`) this.remotePlayer.play(`${pfx}-idle`)
     }
@@ -784,7 +834,6 @@ export class BattleScene extends Phaser.Scene {
       }
 
       body.setVelocityX(bot.direction * BOT_SPEED)
-      bot.sprite.setFlipX(bot.direction < 0)
 
       bot.jumpTimer -= delta
       if (bot.jumpTimer <= 0 && body.blocked.down) {
@@ -792,7 +841,26 @@ export class BattleScene extends Phaser.Scene {
         bot.jumpTimer = 2000 + Math.random() * 3000
       }
 
-      bot.nameLabel.setPosition(bot.sprite.x, bot.sprite.y - 38)
+      // Animação do bot
+      if (bot.sheet.isAnimated) {
+        const pfx = bot.sheet.prefix
+        const currentAnim = bot.sprite.anims.currentAnim?.key ?? ""
+        const side = bot.direction < 0 ? "left" : "right"
+        if (!body.blocked.down) {
+          const jumpAnim = `${pfx}-jump-${side}`
+          if (currentAnim !== jumpAnim) { bot.sprite.setFlipX(false); bot.sprite.play(jumpAnim) }
+        } else if (Math.abs(body.velocity.x) > 10) {
+          const walkAnim = `${pfx}-walk-${side}`
+          if (currentAnim !== walkAnim) { bot.sprite.setFlipX(false); bot.sprite.play(walkAnim) }
+        } else {
+          bot.sprite.setFlipX(bot.direction < 0)
+          if (currentAnim !== `${pfx}-idle`) bot.sprite.play(`${pfx}-idle`)
+        }
+      } else {
+        bot.sprite.setFlipX(bot.direction < 0)
+      }
+
+      bot.nameLabel.setPosition(bot.sprite.x, bot.sprite.y - bot.sheet.nameLabelOffset)
       this.drawBotHPBar(bot)
     }
   }
@@ -831,6 +899,10 @@ export class BattleScene extends Phaser.Scene {
     bot.sprite.body.setVelocityX(kbDir * 260)
     bot.sprite.setTint(0xff4444)
     this.time.delayedCall(150, () => bot.sprite.clearTint())
+    if (bot.sheet.isAnimated) {
+      const side = kbDir > 0 ? "right" : "left"
+      bot.sprite.play(`${bot.sheet.prefix}-hurt-${side}`)
+    }
 
     if (bot.hp <= 0) this.killBot(bot)
   }
