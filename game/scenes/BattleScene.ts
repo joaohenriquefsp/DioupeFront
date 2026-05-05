@@ -602,15 +602,9 @@ export class BattleScene extends Phaser.Scene {
     // Animação — prioridade: hurt > jump/fall > crouch > walk > idle
     const { isAnimated, prefix: pfx } = this.sheet
     if (isAnimated) {
+      const currentAnim = this.player.anims.currentAnim?.key ?? ""
       const side = this.facingLeft ? "left" : "right"
       const hurtSide = (this.remotePlayer && this.remotePlayer.x < this.player.x) ? "right" : "left"
-
-      const playMovement = (key: string, flipX = false) => {
-        if (this.lastMovementAnim === key) return
-        this.lastMovementAnim = key
-        this.player.setFlipX(flipX)
-        this.player.play(key)
-      }
 
       if (this.hitStunTimer > 0) {
         const hurtAnim = `${pfx}-hurt-${hurtSide}`
@@ -624,17 +618,23 @@ export class BattleScene extends Phaser.Scene {
       } else if (this.isAttacking) {
         // ataque em andamento — não interfere
       } else if (!onGround) {
+        // não-loop: lastMovementAnim evita restart após completion
         const falling = body.velocity.y > 0
         const airKey = falling && this.anims.exists(`${pfx}-fall-${side}`) ? `${pfx}-fall-${side}` : `${pfx}-jump-${side}`
-        playMovement(airKey)
+        if (this.lastMovementAnim !== airKey) { this.lastMovementAnim = airKey; this.player.setFlipX(false); this.player.play(airKey) }
       } else if (this.isCrouching) {
-        playMovement(`${pfx}-crouch-${side}`)
+        // não-loop: lastMovementAnim evita restart após completion
+        const crouchAnim = `${pfx}-crouch-${side}`
+        if (this.lastMovementAnim !== crouchAnim) { this.lastMovementAnim = crouchAnim; this.player.setFlipX(false); this.player.play(crouchAnim) }
       } else if (!isStunned) {
+        // loop: currentAnim sempre válido — setFlipX atualiza todo frame
         const moving = left || right
         if (moving) {
-          playMovement(this.facingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`)
+          const walkAnim = this.facingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
+          if (currentAnim !== walkAnim) { this.lastMovementAnim = walkAnim; this.player.setFlipX(false); this.player.play(walkAnim) }
         } else {
-          playMovement(`${pfx}-idle`, !this.facingLeft)
+          this.player.setFlipX(!this.facingLeft)
+          if (currentAnim !== `${pfx}-idle`) { this.lastMovementAnim = `${pfx}-idle`; this.player.play(`${pfx}-idle`) }
         }
       }
     }
@@ -841,19 +841,14 @@ export class BattleScene extends Phaser.Scene {
     const s = getSheet(this.remoteCharacterId)
     if (!s.isAnimated) return
     const pfx = s.prefix
+    const currentAnim = this.remotePlayer.anims.currentAnim?.key ?? ""
     const side = this.remoteFacingLeft ? "left" : "right"
-
-    const playRemote = (key: string, flipX = false) => {
-      if (this.lastRemoteMovementAnim === key) return
-      this.lastRemoteMovementAnim = key
-      this.remotePlayer!.setFlipX(flipX)
-      this.remotePlayer!.play(key)
-    }
 
     // Hurt tem prioridade sobre tudo
     if (this.remoteHurtTimer > 0) {
       const hurtSide = this.player.x < this.remotePlayer.x ? "right" : "left"
-      playRemote(`${pfx}-hurt-${hurtSide}`)
+      const hurtAnim = `${pfx}-hurt-${hurtSide}`
+      if (this.lastRemoteMovementAnim !== hurtAnim) { this.lastRemoteMovementAnim = hurtAnim; this.remotePlayer.play(hurtAnim) }
       return
     }
 
@@ -862,13 +857,16 @@ export class BattleScene extends Phaser.Scene {
     if (Math.abs(this.remoteVY) > 50) {
       const falling = this.remoteVY > 0
       const airKey = falling && this.anims.exists(`${pfx}-fall-${side}`) ? `${pfx}-fall-${side}` : `${pfx}-jump-${side}`
-      playRemote(airKey)
+      if (this.lastRemoteMovementAnim !== airKey) { this.lastRemoteMovementAnim = airKey; this.remotePlayer.setFlipX(false); this.remotePlayer.play(airKey) }
     } else if (this.remoteCrouching) {
-      playRemote(`${pfx}-crouch-${side}`)
+      const crouchAnim = `${pfx}-crouch-${side}`
+      if (this.lastRemoteMovementAnim !== crouchAnim) { this.lastRemoteMovementAnim = crouchAnim; this.remotePlayer.setFlipX(false); this.remotePlayer.play(crouchAnim) }
     } else if (Math.abs(this.remoteVX) > 10) {
-      playRemote(this.remoteFacingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`)
+      const walkAnim = this.remoteFacingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
+      if (currentAnim !== walkAnim) { this.lastRemoteMovementAnim = walkAnim; this.remotePlayer.setFlipX(false); this.remotePlayer.play(walkAnim) }
     } else {
-      playRemote(`${pfx}-idle`, !this.remoteFacingLeft)
+      this.remotePlayer.setFlipX(!this.remoteFacingLeft)
+      if (currentAnim !== `${pfx}-idle`) { this.lastRemoteMovementAnim = `${pfx}-idle`; this.remotePlayer.play(`${pfx}-idle`) }
     }
   }
 
