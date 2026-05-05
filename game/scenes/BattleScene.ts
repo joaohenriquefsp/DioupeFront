@@ -658,6 +658,7 @@ export class BattleScene extends Phaser.Scene {
     if (!this.anims.exists(anim)) { this.isAttacking = false; return }
 
     this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
+    this.player.off(Phaser.Animations.Events.ANIMATION_UPDATE)
     this.player.play(anim)
     this.player.setFlipX(type === "strong" ? this.facingLeft : false)
 
@@ -667,14 +668,12 @@ export class BattleScene extends Phaser.Scene {
     }
 
     const capturedFacing = this.facingLeft
+    let damageApplied = false
 
-    // Dano no último frame (ANIMATION_COMPLETE) — global para todos os personagens animados
-    const finishAtk = () => {
-      this.isAttacking = false
-      this.player.play(`${pfx}-idle`)
-      this.player.setFlipX(!this.facingLeft)
-      this.recoveryTimer = data.recovery
-
+    // Dano exatamente no último frame (ANIMATION_UPDATE detecta quando o frame final começa)
+    const applyDamage = () => {
+      if (damageApplied) return
+      damageApplied = true
       if (!this.online) {
         for (const bot of this.bots) {
           if (!bot.alive || this.hitBotsThisAttack.has(bot)) continue
@@ -694,10 +693,23 @@ export class BattleScene extends Phaser.Scene {
           this.time.delayedCall(120, () => slash.destroy())
         }
       }
-
       if (this.online) {
         getActiveRoom()?.send("attack", { type, facingRight: !capturedFacing })
       }
+    }
+
+    const onUpdate = (_anim: Phaser.Animations.Animation, frame: Phaser.Animations.AnimationFrame) => {
+      if (!frame.nextFrame) applyDamage()
+    }
+    this.player.on(Phaser.Animations.Events.ANIMATION_UPDATE, onUpdate)
+
+    const finishAtk = () => {
+      this.player.off(Phaser.Animations.Events.ANIMATION_UPDATE, onUpdate)
+      applyDamage() // safety: garante dano caso ANIMATION_UPDATE não tenha disparado
+      this.isAttacking = false
+      this.player.play(`${pfx}-idle`)
+      this.player.setFlipX(!this.facingLeft)
+      this.recoveryTimer = data.recovery
     }
 
     this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishAtk)
