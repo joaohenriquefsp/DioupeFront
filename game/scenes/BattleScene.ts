@@ -626,6 +626,7 @@ export class BattleScene extends Phaser.Scene {
     const data = ATTACK_DATA[type]
     const { isAnimated, prefix: pfx } = this.sheet
 
+    ;(this.player.body as Phaser.Physics.Arcade.Body).setVelocityX(0)
     this.hitBotsThisAttack.clear()
     this.isUsingAbility = false
     const myId = ++this.attackSafetyId
@@ -660,15 +661,21 @@ export class BattleScene extends Phaser.Scene {
     this.player.play(anim)
     this.player.setFlipX(type === "strong" ? this.facingLeft : false)
 
-    // Online: envia imediatamente — animação no inimigo aparece o mais rápido possível
+    // Online: avisa inimigo para começar a animação — dano só no último frame
     if (this.online) {
-      getActiveRoom()?.send("attack", { type, facingRight: !this.facingLeft })
+      getActiveRoom()?.send("animOnly", { type, facingRight: !this.facingLeft })
     }
 
-    // Bots: dano no ponto de impacto (solo apenas)
-    if (!this.online) {
-      const capturedFacing = this.facingLeft
-      this.time.delayedCall(data.startup, () => {
+    const capturedFacing = this.facingLeft
+
+    // Dano no último frame (ANIMATION_COMPLETE) — global para todos os personagens animados
+    const finishAtk = () => {
+      this.isAttacking = false
+      this.player.play(`${pfx}-idle`)
+      this.player.setFlipX(!this.facingLeft)
+      this.recoveryTimer = data.recovery
+
+      if (!this.online) {
         for (const bot of this.bots) {
           if (!bot.alive || this.hitBotsThisAttack.has(bot)) continue
           const dx = Math.abs(bot.sprite.x - this.player.x)
@@ -686,17 +693,14 @@ export class BattleScene extends Phaser.Scene {
           slash.setDepth(15)
           this.time.delayedCall(120, () => slash.destroy())
         }
-      })
+      }
+
+      if (this.online) {
+        getActiveRoom()?.send("attack", { type, facingRight: !capturedFacing })
+      }
     }
 
-    const finishAtk = () => {
-      this.isAttacking = false
-      this.player.play(`${pfx}-idle`)
-      this.player.setFlipX(!this.facingLeft)
-      this.recoveryTimer = data.recovery
-    }
     this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishAtk)
-    // Safety com ID de geração — não dispara se outro ataque ou especial iniciou
     const safetyMs = type === "basic" ? 1000 : 1200
     this.time.delayedCall(safetyMs, () => {
       if (this.isAttacking && this.attackSafetyId === myId) finishAtk()
@@ -934,10 +938,23 @@ export class BattleScene extends Phaser.Scene {
       })
     }
 
-    this.time.delayedCall(4000, () => { if (proj.active) proj.destroy() })
+    // Destrói quando sair dos limites do mapa (sem timeout artificial)
+    const mapW = this.scale.width
+    const boundsCheck = this.time.addEvent({
+      delay: 32,
+      loop: true,
+      callback: () => {
+        if (!proj.active) { boundsCheck.destroy(); return }
+        if (proj.x < -128 || proj.x > mapW + 128) {
+          boundsCheck.destroy()
+          proj.destroy()
+        }
+      },
+    })
   }
 
   private doAbility() {
+    ;(this.player.body as Phaser.Physics.Arcade.Body).setVelocityX(0)
     // Invalida safeties pendentes de J/K para não interromper o especial
     ++this.attackSafetyId
     const myId = this.attackSafetyId
