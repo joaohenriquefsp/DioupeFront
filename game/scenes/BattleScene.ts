@@ -207,8 +207,8 @@ export class BattleScene extends Phaser.Scene {
     reg("bw-special-left",  "bw-special-left",  3, 6,  false)
     reg("bw-special-right", "bw-special-right", 3, 6,  false)
     reg("bw-flash-skill",   "bw-flash-skill",   3, 8,  false)
-    reg("bw-crouch-left",   "bw-crouch-left",   4, 8,  false)
-    reg("bw-crouch-right",  "bw-crouch-right",  4, 8,  false)
+    reg("bw-crouch-left",   "bw-crouch-left",   4, 24, false)
+    reg("bw-crouch-right",  "bw-crouch-right",  4, 24, false)
     reg("bw-hurt-left",     "bw-hurt-left",     4, 8,  false)
     reg("bw-hurt-right",    "bw-hurt-right",    4, 8,  false)
     reg("bw-jump-left",     "bw-jump-left",     3, 8,  false)
@@ -369,10 +369,6 @@ export class BattleScene extends Phaser.Scene {
         if (sessionId === myId) {
           if (player.hp < this.hp) {
             this.hitStunTimer = 350
-            if (this.sheet.isAnimated) {
-              const side = this.facingLeft ? "left" : "right"
-              this.player.play(`${this.sheet.prefix}-hurt-${side}`)
-            }
           }
           if (player.hp !== this.hp) { this.hp = player.hp; this.emitHUD() }
           return
@@ -599,13 +595,20 @@ export class BattleScene extends Phaser.Scene {
 
     // Animação — prioridade: hurt > jump/fall > crouch > walk > idle
     const { isAnimated, prefix: pfx } = this.sheet
-    if (isAnimated && !this.isAttacking) {
+    if (isAnimated) {
       const currentAnim = this.player.anims.currentAnim?.key ?? ""
       const side = this.facingLeft ? "left" : "right"
 
       if (this.hitStunTimer > 0) {
         const hurtAnim = `${pfx}-hurt-${side}`
-        if (currentAnim !== hurtAnim) this.player.play(hurtAnim)
+        if (currentAnim !== hurtAnim) {
+          this.player.off(Phaser.Animations.Events.ANIMATION_UPDATE)
+          this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
+          this.isAttacking = false
+          this.player.play(hurtAnim)
+        }
+      } else if (this.isAttacking) {
+        // ataque em andamento — não interfere
       } else if (!onGround) {
         const jumpAnim = `${pfx}-jump-${side}`
         if (currentAnim !== jumpAnim) { this.player.setFlipX(false); this.player.play(jumpAnim) }
@@ -792,9 +795,11 @@ export class BattleScene extends Phaser.Scene {
       this.player.off(Phaser.Animations.Events.ANIMATION_UPDATE, onUpdate)
       applyDamage() // safety: garante dano caso ANIMATION_UPDATE não tenha disparado
       this.isAttacking = false
-      this.player.play(`${pfx}-idle`)
-      this.player.setFlipX(!this.facingLeft)
       this.recoveryTimer = data.recovery
+      if (this.hitStunTimer <= 0) {
+        this.player.play(`${pfx}-idle`)
+        this.player.setFlipX(!this.facingLeft)
+      }
     }
 
     this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, finishAtk)
