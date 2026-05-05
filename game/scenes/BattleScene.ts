@@ -218,6 +218,8 @@ export class BattleScene extends Phaser.Scene {
       if (this.anims.exists(key)) this.anims.remove(key)
       this.anims.create({ key, frames: this.anims.generateFrameNumbers(tex, { frames }), frameRate: fps, repeat: loop ? -1 : 0 })
     }
+    regFrames("bw-fall-left",  "bw-jump-left",  [3], 8, false)
+    regFrames("bw-fall-right", "bw-jump-right", [3], 8, false)
     regFrames("dioupe-power-right-intro",  "dioupe-power-right", [0,1,2,3], 6, false)
     regFrames("dioupe-power-right-travel", "dioupe-power-right", [2,3],     5, true)
     regFrames("dioupe-power-right-impact", "dioupe-power-right", [4],       6, false)
@@ -612,8 +614,9 @@ export class BattleScene extends Phaser.Scene {
       } else if (this.isAttacking) {
         // ataque em andamento — não interfere
       } else if (!onGround) {
-        const jumpAnim = `${pfx}-jump-${side}`
-        if (currentAnim !== jumpAnim) { this.player.setFlipX(false); this.player.play(jumpAnim) }
+        const falling = body.velocity.y > 0
+        const airKey = falling && this.anims.exists(`${pfx}-fall-${side}`) ? `${pfx}-fall-${side}` : `${pfx}-jump-${side}`
+        if (currentAnim !== airKey) { this.player.setFlipX(false); this.player.play(airKey) }
       } else if (this.isCrouching) {
         const crouchAnim = `${pfx}-crouch-${side}`
         if (currentAnim !== crouchAnim) { this.player.setFlipX(false); this.player.play(crouchAnim) }
@@ -844,8 +847,9 @@ export class BattleScene extends Phaser.Scene {
 
     const side = this.remoteFacingLeft ? "left" : "right"
     if (Math.abs(this.remoteVY) > 50) {
-      const jumpAnim = `${pfx}-jump-${side}`
-      if (currentAnim !== jumpAnim) { this.remotePlayer.setFlipX(false); this.remotePlayer.play(jumpAnim) }
+      const falling = this.remoteVY > 0
+      const airKey = falling && this.anims.exists(`${pfx}-fall-${side}`) ? `${pfx}-fall-${side}` : `${pfx}-jump-${side}`
+      if (currentAnim !== airKey) { this.remotePlayer.setFlipX(false); this.remotePlayer.play(airKey) }
     } else if (Math.abs(this.remoteVX) > 10) {
       const walkAnim = this.remoteFacingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
       if (currentAnim !== walkAnim) { this.remotePlayer.setFlipX(false); this.remotePlayer.play(walkAnim) }
@@ -889,8 +893,9 @@ export class BattleScene extends Phaser.Scene {
         const currentAnim = bot.sprite.anims.currentAnim?.key ?? ""
         const side = bot.direction < 0 ? "left" : "right"
         if (!body.blocked.down) {
-          const jumpAnim = `${pfx}-jump-${side}`
-          if (currentAnim !== jumpAnim) { bot.sprite.setFlipX(false); bot.sprite.play(jumpAnim) }
+          const falling = body.velocity.y > 0
+          const airKey = falling && this.anims.exists(`${pfx}-fall-${side}`) ? `${pfx}-fall-${side}` : `${pfx}-jump-${side}`
+          if (currentAnim !== airKey) { bot.sprite.setFlipX(false); bot.sprite.play(airKey) }
         } else if (Math.abs(body.velocity.x) > 10) {
           const walkAnim = `${pfx}-walk-${side}`
           if (currentAnim !== walkAnim) { bot.sprite.setFlipX(false); bot.sprite.play(walkAnim) }
