@@ -147,15 +147,21 @@ export class BattleScene extends Phaser.Scene {
       if (!this.textures.exists(key))
         this.load.spritesheet(key, `${bw}/${file}`, { frameWidth: fw, frameHeight: fw })
     }
-    loadBW("bw-idle",          "idle.png",         128)
-    loadBW("bw-walk-left",     "walk-left.png",    128)
-    loadBW("bw-walk-right",    "walk-right.png",   128)
-    loadBW("bw-attack-right",  "attack-right.png", 128)
-    loadBW("bw-attack-left",   "attack-left.png",  128)
-    loadBW("bw-attack2",       "attack2.png",      128)
-    loadBW("bw-special-left",  "special-left.png", 128)
-    loadBW("bw-special-right", "special-right.png",128)
-    loadBW("bw-flash-skill",   "flash-skill.png",  128)
+    loadBW("bw-idle",          "idle.png",          128)
+    loadBW("bw-walk-left",     "walk-left.png",     128)
+    loadBW("bw-walk-right",    "walk-right.png",    128)
+    loadBW("bw-attack-right",  "attack-right.png",  128)
+    loadBW("bw-attack-left",   "attack-left.png",   128)
+    loadBW("bw-attack2",       "attack2.png",       128)
+    loadBW("bw-special-left",  "special-left.png",  128)
+    loadBW("bw-special-right", "special-right.png", 128)
+    loadBW("bw-flash-skill",   "flash-skill.png",   128)
+    loadBW("bw-crouch-left",   "crouch-left.png",   128)
+    loadBW("bw-crouch-right",  "crouch-right.png",  128)
+    loadBW("bw-hurt-left",     "hurt-left.png",     128)
+    loadBW("bw-hurt-right",    "hurt-right.png",    128)
+    loadBW("bw-jump-left",     "jump-left.png",     128)
+    loadBW("bw-jump-right",    "jump-right.png",    128)
   }
 
   create() {
@@ -182,6 +188,12 @@ export class BattleScene extends Phaser.Scene {
     reg("bw-special-left",  "bw-special-left",  3, 6,  false)
     reg("bw-special-right", "bw-special-right", 3, 6,  false)
     reg("bw-flash-skill",   "bw-flash-skill",   3, 8,  false)
+    reg("bw-crouch-left",   "bw-crouch-left",   4, 8,  false)
+    reg("bw-crouch-right",  "bw-crouch-right",  4, 8,  false)
+    reg("bw-hurt-left",     "bw-hurt-left",     4, 8,  false)
+    reg("bw-hurt-right",    "bw-hurt-right",    4, 8,  false)
+    reg("bw-jump-left",     "bw-jump-left",     3, 8,  false)
+    reg("bw-jump-right",    "bw-jump-right",    3, 8,  false)
 
     const regFrames = (key: string, tex: string, frames: number[], fps: number, loop: boolean) => {
       if (this.anims.exists(key)) this.anims.remove(key)
