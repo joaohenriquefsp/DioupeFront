@@ -624,18 +624,23 @@ export class BattleScene extends Phaser.Scene {
       } else if (this.isAttacking) {
         // ataque em andamento — não interfere
       } else if (!onGround) {
-        // não-loop: lastMovementAnim evita restart após completion
         const falling = body.velocity.y > 0
         const airKey = falling && this.anims.exists(`${pfx}-fall-${side}`) ? `${pfx}-fall-${side}` : `${pfx}-jump-${side}`
-        if (this.lastMovementAnim !== airKey) { this.lastMovementAnim = airKey; this.player.setFlipX(false); this.player.play(airKey) }
+        if (this.lastMovementAnim !== airKey) {
+          console.log(`[AIR] side=${side} falling=${falling} fallExists=${this.anims.exists(`${pfx}-fall-${side}`)} airKey=${airKey} last=${this.lastMovementAnim}`)
+          this.lastMovementAnim = airKey; this.player.setFlipX(false); this.player.play(airKey)
+        }
       } else if (this.isCrouching) {
         const crouchAnim = `${pfx}-crouch-${side}`
         const holdAnim   = `${pfx}-crouch-${side}-hold`
+        console.log(`[CROUCH] side=${side} last=${this.lastMovementAnim} crouchAnim=${crouchAnim} holdAnim=${holdAnim} holdExists=${this.anims.exists(holdAnim)}`)
         if (this.lastMovementAnim !== crouchAnim && this.lastMovementAnim !== holdAnim) {
+          console.log(`[CROUCH] → playing transition`)
           this.lastMovementAnim = crouchAnim
           this.player.setFlipX(false)
           this.player.play(crouchAnim)
           this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+            console.log(`[CROUCH COMPLETE] isCrouching=${this.isCrouching} → playing hold=${holdAnim}`)
             if (this.isCrouching) { this.lastMovementAnim = holdAnim; this.player.play(holdAnim) }
           })
         }
