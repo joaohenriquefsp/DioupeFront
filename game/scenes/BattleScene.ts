@@ -192,46 +192,41 @@ export class BattleScene extends Phaser.Scene {
     reg("dioupe-attack2",       "dioupe-attack2",       4, 7,  false)
     reg("dioupe-special-left",  "dioupe-special-left",  8, 6,  false)
     reg("dioupe-special-right", "dioupe-special-right", 8, 6,  false)
+    reg("dioupe-jump-right",    "dioupe-jump-right",    4, 8,  false)
     reg("dioupe-jump-left",     "dioupe-jump-left",     4, 8,  false)
+    reg("dioupe-hurt-right",    "dioupe-hurt-right",    4, 8,  false)
     reg("dioupe-hurt-left",     "dioupe-hurt-left",     4, 8,  false)
+    reg("dioupe-crouch-right",  "dioupe-crouch-right",  3, 8,  false)
     reg("dioupe-crouch-left",   "dioupe-crouch-left",   3, 8,  false)
-    // right = espelho do left → frames invertidos para corrigir ordem
-    // (espelhar imagem inverte frames: 0→n vira n→0)
 
     reg("bw-idle",          "bw-idle",          8, 8,  true)
     reg("bw-walk-left",     "bw-walk-left",     4, 8,  true)
     reg("bw-walk-right",    "bw-walk-right",    4, 8,  true)
     reg("bw-attack-right",  "bw-attack-right",  3, 7,  false)
-    reg("bw-attack-left",   "bw-attack-left",   7, 7,  false, 4)  // frames 0-3 transparentes, conteúdo em 4-7
+    reg("bw-attack-left",   "bw-attack-left",   3, 7,  false)
     reg("bw-attack2",       "bw-attack2",       3, 7,  false)
     reg("bw-special-left",  "bw-special-left",  3, 6,  false)
     reg("bw-special-right", "bw-special-right", 3, 6,  false)
     reg("bw-flash-skill",   "bw-flash-skill",   3, 8,  false)
     reg("bw-crouch-left",   "bw-crouch-left",   4, 24, false)
+    reg("bw-crouch-right",  "bw-crouch-right",  4, 24, false)
     reg("bw-hurt-left",     "bw-hurt-left",     4, 8,  false)
+    reg("bw-hurt-right",    "bw-hurt-right",    4, 8,  false)
     reg("bw-jump-left",     "bw-jump-left",     3, 8,  false)
-    // right = espelho do left → frames invertidos
+    reg("bw-jump-right",    "bw-jump-right",    3, 8,  false)
 
     const regFrames = (key: string, tex: string, frames: number[], fps: number, loop: boolean) => {
       if (this.anims.exists(key)) this.anims.remove(key)
       this.anims.create({ key, frames: this.anims.generateFrameNumbers(tex, { frames }), frameRate: fps, repeat: loop ? -1 : 0 })
     }
-    // Sprites right criados por espelho — frames em ordem inversa para corrigir direção
-    regFrames("dioupe-jump-right",   "dioupe-jump-right",   [4,3,2,1,0], 8,  false)
-    regFrames("dioupe-hurt-right",   "dioupe-hurt-right",   [4,3,2,1,0], 8,  false)
-    regFrames("dioupe-crouch-right", "dioupe-crouch-right", [3,2,1,0],   8,  false)
-    regFrames("bw-crouch-right",     "bw-crouch-right",     [4,3,2,1,0], 24, false)
-    regFrames("bw-hurt-right",       "bw-hurt-right",       [4,3,2,1,0], 8,  false)
-    regFrames("bw-jump-right",       "bw-jump-right",       [3,2,1,0],   8,  false)
-
     regFrames("bw-fall-left",             "bw-jump-left",        [3], 1, true)
-    regFrames("bw-fall-right",            "bw-jump-right",       [0], 1, true)  // right invertido: frame 0 = última pose (no ar)
+    regFrames("bw-fall-right",            "bw-jump-right",       [3], 1, true)
     regFrames("bw-crouch-left-hold",      "bw-crouch-left",      [4], 1, true)
-    regFrames("bw-crouch-right-hold",     "bw-crouch-right",     [0], 1, true)  // right invertido: frame 0 = agachado
+    regFrames("bw-crouch-right-hold",     "bw-crouch-right",     [4], 1, true)
     regFrames("dioupe-fall-left",         "dioupe-jump-left",    [4], 1, true)
-    regFrames("dioupe-fall-right",        "dioupe-jump-right",   [0], 1, true)  // right invertido: frame 0 = última pose (no ar)
+    regFrames("dioupe-fall-right",        "dioupe-jump-right",   [4], 1, true)
     regFrames("dioupe-crouch-left-hold",  "dioupe-crouch-left",  [3], 1, true)
-    regFrames("dioupe-crouch-right-hold", "dioupe-crouch-right", [0], 1, true)  // right invertido: frame 0 = agachado
+    regFrames("dioupe-crouch-right-hold", "dioupe-crouch-right", [3], 1, true)
     regFrames("dioupe-power-right-intro",  "dioupe-power-right", [0,1,2,3], 6, false)
     regFrames("dioupe-power-right-travel", "dioupe-power-right", [2,3],     5, true)
     regFrames("dioupe-power-right-impact", "dioupe-power-right", [4],       6, false)
@@ -1048,7 +1043,7 @@ export class BattleScene extends Phaser.Scene {
       originY - 10,
       `dioupe-power-${side}`
     )
-    proj.setScale(0.75)
+    proj.setScale(2.25)
     proj.setDepth(9)
     this.projectiles.add(proj)
     proj.body.setAllowGravity(false)
