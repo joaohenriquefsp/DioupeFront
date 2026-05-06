@@ -16,8 +16,8 @@ export interface CharacterSheet {
 const SHEETS: Record<string, CharacterSheet> = {
   dioupe: {
     id: "dioupe", isAnimated: true, prefix: "dioupe",
-    scale: 0.75, bodyW: 55, bodyH: 100, offsetX: 37, offsetY: 20,
-    nameLabelOffset: 52, specialType: "projectile",
+    scale: 0.85, bodyW: 65, bodyH: 112, offsetX: 32, offsetY: 14,
+    nameLabelOffset: 65, specialType: "projectile",
   },
   "boletas-wolf": {
     id: "boletas-wolf", isAnimated: true, prefix: "bw",

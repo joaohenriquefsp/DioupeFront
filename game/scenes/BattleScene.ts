@@ -1047,6 +1047,8 @@ export class BattleScene extends Phaser.Scene {
     proj.setDepth(9)
     this.projectiles.add(proj)
     proj.body.setAllowGravity(false)
+    proj.body.setSize(100, 100)
+    proj.body.setOffset(14, 14)
     proj.body.setVelocityX(dir * 45)
     proj.body.setVelocityY(0)
 
@@ -1086,7 +1088,7 @@ export class BattleScene extends Phaser.Scene {
             if (!proj.active) { checker.destroy(); return }
             if (!remoteRef.visible) return
             const dist = Phaser.Math.Distance.Between(proj.x, proj.y, remoteRef.x, remoteRef.y)
-            if (dist < 40) {
+            if (dist < 120) {
               checker.destroy()
               playImpact()
               // Dano enviado APENAS quando o projétil bate, não no keypress
