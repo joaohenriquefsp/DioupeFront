@@ -188,7 +188,7 @@ export class BattleScene extends Phaser.Scene {
     reg("dioupe-walk-left",     "dioupe-walk-left",     7, 8,  true)
     reg("dioupe-walk-right",    "dioupe-walk-right",    7, 8,  true)
     reg("dioupe-attack-right",  "dioupe-attack-right",  3, 7,  false)
-    reg("dioupe-attack-left",   "dioupe-attack-left",   4, 7,  false, 1)  // frame 0 transparente
+    reg("dioupe-attack-left",   "dioupe-attack-left",   3, 7,  false)
     reg("dioupe-attack2",       "dioupe-attack2",       4, 7,  false)
     reg("dioupe-special-left",  "dioupe-special-left",  8, 6,  false)
     reg("dioupe-special-right", "dioupe-special-right", 8, 6,  false)
