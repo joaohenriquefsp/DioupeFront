@@ -221,8 +221,14 @@ export class BattleScene extends Phaser.Scene {
       if (this.anims.exists(key)) this.anims.remove(key)
       this.anims.create({ key, frames: this.anims.generateFrameNumbers(tex, { frames }), frameRate: fps, repeat: loop ? -1 : 0 })
     }
-    regFrames("bw-fall-left",  "bw-jump-left",  [3], 8, false)
-    regFrames("bw-fall-right", "bw-jump-right", [3], 8, false)
+    regFrames("bw-fall-left",             "bw-jump-left",        [3], 1, true)
+    regFrames("bw-fall-right",            "bw-jump-right",       [3], 1, true)
+    regFrames("bw-crouch-left-hold",      "bw-crouch-left",      [4], 1, true)
+    regFrames("bw-crouch-right-hold",     "bw-crouch-right",     [4], 1, true)
+    regFrames("dioupe-fall-left",         "dioupe-jump-left",    [4], 1, true)
+    regFrames("dioupe-fall-right",        "dioupe-jump-right",   [4], 1, true)
+    regFrames("dioupe-crouch-left-hold",  "dioupe-crouch-left",  [3], 1, true)
+    regFrames("dioupe-crouch-right-hold", "dioupe-crouch-right", [3], 1, true)
     regFrames("dioupe-power-right-intro",  "dioupe-power-right", [0,1,2,3], 6, false)
     regFrames("dioupe-power-right-travel", "dioupe-power-right", [2,3],     5, true)
     regFrames("dioupe-power-right-impact", "dioupe-power-right", [4],       6, false)
@@ -623,9 +629,16 @@ export class BattleScene extends Phaser.Scene {
         const airKey = falling && this.anims.exists(`${pfx}-fall-${side}`) ? `${pfx}-fall-${side}` : `${pfx}-jump-${side}`
         if (this.lastMovementAnim !== airKey) { this.lastMovementAnim = airKey; this.player.setFlipX(false); this.player.play(airKey) }
       } else if (this.isCrouching) {
-        // não-loop: lastMovementAnim evita restart após completion
         const crouchAnim = `${pfx}-crouch-${side}`
-        if (this.lastMovementAnim !== crouchAnim) { this.lastMovementAnim = crouchAnim; this.player.setFlipX(false); this.player.play(crouchAnim) }
+        const holdAnim   = `${pfx}-crouch-${side}-hold`
+        if (this.lastMovementAnim !== crouchAnim && this.lastMovementAnim !== holdAnim) {
+          this.lastMovementAnim = crouchAnim
+          this.player.setFlipX(false)
+          this.player.play(crouchAnim)
+          this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+            if (this.isCrouching) { this.lastMovementAnim = holdAnim; this.player.play(holdAnim) }
+          })
+        }
       } else if (!isStunned) {
         // loop: currentAnim sempre válido — setFlipX atualiza todo frame
         const moving = left || right
@@ -860,7 +873,15 @@ export class BattleScene extends Phaser.Scene {
       if (this.lastRemoteMovementAnim !== airKey) { this.lastRemoteMovementAnim = airKey; this.remotePlayer.setFlipX(false); this.remotePlayer.play(airKey) }
     } else if (this.remoteCrouching) {
       const crouchAnim = `${pfx}-crouch-${side}`
-      if (this.lastRemoteMovementAnim !== crouchAnim) { this.lastRemoteMovementAnim = crouchAnim; this.remotePlayer.setFlipX(false); this.remotePlayer.play(crouchAnim) }
+      const holdAnim   = `${pfx}-crouch-${side}-hold`
+      if (this.lastRemoteMovementAnim !== crouchAnim && this.lastRemoteMovementAnim !== holdAnim) {
+        this.lastRemoteMovementAnim = crouchAnim
+        this.remotePlayer.setFlipX(false)
+        this.remotePlayer.play(crouchAnim)
+        this.remotePlayer.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
+          if (this.remoteCrouching) { this.lastRemoteMovementAnim = holdAnim; this.remotePlayer!.play(holdAnim) }
+        })
+      }
     } else if (Math.abs(this.remoteVX) > 10) {
       const walkAnim = this.remoteFacingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
       if (currentAnim !== walkAnim) { this.lastRemoteMovementAnim = walkAnim; this.remotePlayer.setFlipX(false); this.remotePlayer.play(walkAnim) }
