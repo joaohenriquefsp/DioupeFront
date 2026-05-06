@@ -90,9 +90,7 @@ export class BattleScene extends Phaser.Scene {
   private playerStunTimer = 0          // stun recebido do flash-stun do BW inimigo
   private hitStunTimer = 0             // stun ao receber dano
   private isCrouching = false
-  private lastMovementAnim = ""
   private remoteCrouching = false
-  private lastRemoteMovementAnim = ""
   private queuedAttack: "basic" | "strong" | null = null
   private hitBotsThisAttack = new Set<Bot>()
 
@@ -619,11 +617,10 @@ export class BattleScene extends Phaser.Scene {
 
       if (this.hitStunTimer > 0) {
         const hurtAnim = `${pfx}-hurt-${hurtSide}`
-        if (this.lastMovementAnim !== hurtAnim) {
+        if (currentAnim !== hurtAnim) {
           this.player.off(Phaser.Animations.Events.ANIMATION_UPDATE)
           this.player.off(Phaser.Animations.Events.ANIMATION_COMPLETE)
           this.isAttacking = false
-          this.lastMovementAnim = hurtAnim
           this.player.play(hurtAnim)
         }
       } else if (this.isAttacking) {
@@ -631,27 +628,25 @@ export class BattleScene extends Phaser.Scene {
       } else if (!onGround) {
         const falling = body.velocity.y > 0
         const airKey = falling && this.anims.exists(`${pfx}-fall-${side}`) ? `${pfx}-fall-${side}` : `${pfx}-jump-${side}`
-        if (this.lastMovementAnim !== airKey) { this.lastMovementAnim = airKey; this.player.setFlipX(false); this.player.play(airKey) }
+        if (currentAnim !== airKey) { this.player.setFlipX(false); this.player.play(airKey) }
       } else if (this.isCrouching) {
         const crouchAnim = `${pfx}-crouch-${side}`
         const holdAnim   = `${pfx}-crouch-${side}-hold`
-        if (this.lastMovementAnim !== crouchAnim && this.lastMovementAnim !== holdAnim) {
-          this.lastMovementAnim = crouchAnim
+        if (currentAnim !== crouchAnim && currentAnim !== holdAnim) {
           this.player.setFlipX(false)
           this.player.play(crouchAnim)
           this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
-            if (this.isCrouching) { this.lastMovementAnim = holdAnim; this.player.play(holdAnim) }
+            if (this.isCrouching) this.player.play(holdAnim)
           })
         }
       } else if (!isStunned) {
-        // loop: currentAnim sempre válido — setFlipX atualiza todo frame
         const moving = left || right
         if (moving) {
           const walkAnim = this.facingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
-          if (currentAnim !== walkAnim) { this.lastMovementAnim = walkAnim; this.player.setFlipX(false); this.player.play(walkAnim) }
+          if (currentAnim !== walkAnim) { this.player.setFlipX(false); this.player.play(walkAnim) }
         } else {
           this.player.setFlipX(!this.facingLeft)
-          if (currentAnim !== `${pfx}-idle`) { this.lastMovementAnim = `${pfx}-idle`; this.player.play(`${pfx}-idle`) }
+          if (currentAnim !== `${pfx}-idle`) this.player.play(`${pfx}-idle`)
         }
       }
     }
@@ -744,7 +739,6 @@ export class BattleScene extends Phaser.Scene {
     const { isAnimated, prefix: pfx } = this.sheet
 
     ;(this.player.body as Phaser.Physics.Arcade.Body).setVelocityX(0)
-    this.lastMovementAnim = ""
     this.hitBotsThisAttack.clear()
     this.isUsingAbility = false
     const myId = ++this.attackSafetyId
@@ -865,33 +859,32 @@ export class BattleScene extends Phaser.Scene {
     if (this.remoteHurtTimer > 0) {
       const hurtSide = this.player.x < this.remotePlayer.x ? "right" : "left"
       const hurtAnim = `${pfx}-hurt-${hurtSide}`
-      if (this.lastRemoteMovementAnim !== hurtAnim) { this.lastRemoteMovementAnim = hurtAnim; this.remotePlayer.play(hurtAnim) }
+      if (currentAnim !== hurtAnim) this.remotePlayer.play(hurtAnim)
       return
     }
 
-    if (this.remoteIsAttacking) { this.lastRemoteMovementAnim = ""; return }
+    if (this.remoteIsAttacking) return
 
     if (Math.abs(this.remoteVY) > 50) {
       const falling = this.remoteVY > 0
       const airKey = falling && this.anims.exists(`${pfx}-fall-${side}`) ? `${pfx}-fall-${side}` : `${pfx}-jump-${side}`
-      if (this.lastRemoteMovementAnim !== airKey) { this.lastRemoteMovementAnim = airKey; this.remotePlayer.setFlipX(false); this.remotePlayer.play(airKey) }
+      if (currentAnim !== airKey) { this.remotePlayer.setFlipX(false); this.remotePlayer.play(airKey) }
     } else if (this.remoteCrouching) {
       const crouchAnim = `${pfx}-crouch-${side}`
       const holdAnim   = `${pfx}-crouch-${side}-hold`
-      if (this.lastRemoteMovementAnim !== crouchAnim && this.lastRemoteMovementAnim !== holdAnim) {
-        this.lastRemoteMovementAnim = crouchAnim
+      if (currentAnim !== crouchAnim && currentAnim !== holdAnim) {
         this.remotePlayer.setFlipX(false)
         this.remotePlayer.play(crouchAnim)
         this.remotePlayer.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
-          if (this.remoteCrouching) { this.lastRemoteMovementAnim = holdAnim; this.remotePlayer!.play(holdAnim) }
+          if (this.remoteCrouching) this.remotePlayer!.play(holdAnim)
         })
       }
     } else if (Math.abs(this.remoteVX) > 10) {
       const walkAnim = this.remoteFacingLeft ? `${pfx}-walk-left` : `${pfx}-walk-right`
-      if (currentAnim !== walkAnim) { this.lastRemoteMovementAnim = walkAnim; this.remotePlayer.setFlipX(false); this.remotePlayer.play(walkAnim) }
+      if (currentAnim !== walkAnim) { this.remotePlayer.setFlipX(false); this.remotePlayer.play(walkAnim) }
     } else {
       this.remotePlayer.setFlipX(!this.remoteFacingLeft)
-      if (currentAnim !== `${pfx}-idle`) { this.lastRemoteMovementAnim = `${pfx}-idle`; this.remotePlayer.play(`${pfx}-idle`) }
+      if (currentAnim !== `${pfx}-idle`) this.remotePlayer.play(`${pfx}-idle`)
     }
   }
 
@@ -1134,7 +1127,6 @@ export class BattleScene extends Phaser.Scene {
 
   private doAbility() {
     ;(this.player.body as Phaser.Physics.Arcade.Body).setVelocityX(0)
-    this.lastMovementAnim = ""
     // Invalida safeties pendentes de J/K para não interromper o especial
     ++this.attackSafetyId
     const myId = this.attackSafetyId
