@@ -194,12 +194,11 @@ export class BattleScene extends Phaser.Scene {
     reg("dioupe-attack2",       "dioupe-attack2",       4, 7,  false)
     reg("dioupe-special-left",  "dioupe-special-left",  8, 6,  false)
     reg("dioupe-special-right", "dioupe-special-right", 8, 6,  false)
-    reg("dioupe-jump-right",    "dioupe-jump-right",    4, 8,  false)
     reg("dioupe-jump-left",     "dioupe-jump-left",     4, 8,  false)
-    reg("dioupe-hurt-right",    "dioupe-hurt-right",    4, 8,  false)
     reg("dioupe-hurt-left",     "dioupe-hurt-left",     4, 8,  false)
-    reg("dioupe-crouch-right",  "dioupe-crouch-right",  3, 8,  false)
     reg("dioupe-crouch-left",   "dioupe-crouch-left",   3, 8,  false)
+    // right = espelho do left → frames invertidos para corrigir ordem
+    // (espelhar imagem inverte frames: 0→n vira n→0)
 
     reg("bw-idle",          "bw-idle",          8, 8,  true)
     reg("bw-walk-left",     "bw-walk-left",     4, 8,  true)
@@ -211,24 +210,30 @@ export class BattleScene extends Phaser.Scene {
     reg("bw-special-right", "bw-special-right", 3, 6,  false)
     reg("bw-flash-skill",   "bw-flash-skill",   3, 8,  false)
     reg("bw-crouch-left",   "bw-crouch-left",   4, 24, false)
-    reg("bw-crouch-right",  "bw-crouch-right",  4, 24, false)
     reg("bw-hurt-left",     "bw-hurt-left",     4, 8,  false)
-    reg("bw-hurt-right",    "bw-hurt-right",    4, 8,  false)
     reg("bw-jump-left",     "bw-jump-left",     3, 8,  false)
-    reg("bw-jump-right",    "bw-jump-right",    3, 8,  false)
+    // right = espelho do left → frames invertidos
 
     const regFrames = (key: string, tex: string, frames: number[], fps: number, loop: boolean) => {
       if (this.anims.exists(key)) this.anims.remove(key)
       this.anims.create({ key, frames: this.anims.generateFrameNumbers(tex, { frames }), frameRate: fps, repeat: loop ? -1 : 0 })
     }
+    // Sprites right criados por espelho — frames em ordem inversa para corrigir direção
+    regFrames("dioupe-jump-right",   "dioupe-jump-right",   [4,3,2,1,0], 8,  false)
+    regFrames("dioupe-hurt-right",   "dioupe-hurt-right",   [4,3,2,1,0], 8,  false)
+    regFrames("dioupe-crouch-right", "dioupe-crouch-right", [3,2,1,0],   8,  false)
+    regFrames("bw-crouch-right",     "bw-crouch-right",     [4,3,2,1,0], 24, false)
+    regFrames("bw-hurt-right",       "bw-hurt-right",       [4,3,2,1,0], 8,  false)
+    regFrames("bw-jump-right",       "bw-jump-right",       [3,2,1,0],   8,  false)
+
     regFrames("bw-fall-left",             "bw-jump-left",        [3], 1, true)
-    regFrames("bw-fall-right",            "bw-jump-right",       [3], 1, true)
+    regFrames("bw-fall-right",            "bw-jump-right",       [0], 1, true)  // right invertido: frame 0 = última pose (no ar)
     regFrames("bw-crouch-left-hold",      "bw-crouch-left",      [4], 1, true)
-    regFrames("bw-crouch-right-hold",     "bw-crouch-right",     [4], 1, true)
+    regFrames("bw-crouch-right-hold",     "bw-crouch-right",     [0], 1, true)  // right invertido: frame 0 = agachado
     regFrames("dioupe-fall-left",         "dioupe-jump-left",    [4], 1, true)
-    regFrames("dioupe-fall-right",        "dioupe-jump-right",   [4], 1, true)
+    regFrames("dioupe-fall-right",        "dioupe-jump-right",   [0], 1, true)  // right invertido: frame 0 = última pose (no ar)
     regFrames("dioupe-crouch-left-hold",  "dioupe-crouch-left",  [3], 1, true)
-    regFrames("dioupe-crouch-right-hold", "dioupe-crouch-right", [3], 1, true)
+    regFrames("dioupe-crouch-right-hold", "dioupe-crouch-right", [0], 1, true)  // right invertido: frame 0 = agachado
     regFrames("dioupe-power-right-intro",  "dioupe-power-right", [0,1,2,3], 6, false)
     regFrames("dioupe-power-right-travel", "dioupe-power-right", [2,3],     5, true)
     regFrames("dioupe-power-right-impact", "dioupe-power-right", [4],       6, false)
@@ -626,21 +631,15 @@ export class BattleScene extends Phaser.Scene {
       } else if (!onGround) {
         const falling = body.velocity.y > 0
         const airKey = falling && this.anims.exists(`${pfx}-fall-${side}`) ? `${pfx}-fall-${side}` : `${pfx}-jump-${side}`
-        if (this.lastMovementAnim !== airKey) {
-          console.log(`[AIR] side=${side} falling=${falling} fallExists=${this.anims.exists(`${pfx}-fall-${side}`)} airKey=${airKey} last=${this.lastMovementAnim}`)
-          this.lastMovementAnim = airKey; this.player.setFlipX(false); this.player.play(airKey)
-        }
+        if (this.lastMovementAnim !== airKey) { this.lastMovementAnim = airKey; this.player.setFlipX(false); this.player.play(airKey) }
       } else if (this.isCrouching) {
         const crouchAnim = `${pfx}-crouch-${side}`
         const holdAnim   = `${pfx}-crouch-${side}-hold`
-        console.log(`[CROUCH] side=${side} last=${this.lastMovementAnim} crouchAnim=${crouchAnim} holdAnim=${holdAnim} holdExists=${this.anims.exists(holdAnim)}`)
         if (this.lastMovementAnim !== crouchAnim && this.lastMovementAnim !== holdAnim) {
-          console.log(`[CROUCH] → playing transition`)
           this.lastMovementAnim = crouchAnim
           this.player.setFlipX(false)
           this.player.play(crouchAnim)
           this.player.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () => {
-            console.log(`[CROUCH COMPLETE] isCrouching=${this.isCrouching} → playing hold=${holdAnim}`)
             if (this.isCrouching) { this.lastMovementAnim = holdAnim; this.player.play(holdAnim) }
           })
         }
