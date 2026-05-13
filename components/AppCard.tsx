@@ -36,7 +36,7 @@ export default function AppCard({
         background: "var(--bg-glass)",
         backdropFilter: "blur(20px)",
         WebkitBackdropFilter: "blur(20px)",
-        border: "1px solid var(--border-glass)",
+        border: "var(--border-width) solid var(--border-glass)",
         borderRadius: "20px",
         padding: "clamp(1.5rem, 4vw, 2.5rem)",
         transition: "border-color 0.2s, box-shadow 0.2s",
@@ -58,17 +58,18 @@ export default function AppCard({
           className="w-11 h-11 flex items-center justify-center rounded-xl shrink-0"
           style={{
             background: "rgba(14,165,233,0.1)",
-            border: "1px solid rgba(14,165,233,0.2)",
+            border: "var(--border-width) solid rgba(14,165,233,0.2)",
           }}
         >
           <Icon size={20} style={{ color: "var(--accent-bright)" }} />
         </div>
         <span
-          className="text-xs font-medium px-3 py-1 rounded-full uppercase tracking-wider"
+          className="text-xs font-medium rounded-full uppercase tracking-wider"
           style={{
             background: "rgba(14,165,233,0.1)",
-            border: "1px solid rgba(14,165,233,0.2)",
+            border: "var(--border-width) solid rgba(14,165,233,0.2)",
             color: "var(--accent-bright)",
+            padding: "var(--badge-padding)",
           }}
         >
           {platform}

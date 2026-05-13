@@ -15,6 +15,8 @@
 
   --border-glass:   rgba(14, 165, 233, 0.12);
   --border-hover:   rgba(14, 165, 233, 0.35);
+  --border-width:   1px;
+  --badge-padding:  5px 28px;
 }
 
 @theme inline {

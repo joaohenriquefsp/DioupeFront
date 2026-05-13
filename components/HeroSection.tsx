@@ -47,12 +47,12 @@ export default function HeroSection() {
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           transition={t(0)}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-6 sm:mb-8"
+          className="inline-flex items-center gap-2 mb-6 sm:mb-8"
           style={{
-            background: "var(--bg-glass)",
-            backdropFilter: "blur(20px)",
-            WebkitBackdropFilter: "blur(20px)",
-            border: "1px solid var(--border-glass)",
+            background: "rgba(14,165,233,0.08)",
+            border: "var(--border-width) solid rgba(14,165,233,0.18)",
+            borderRadius: "999px",
+            padding: "var(--badge-padding)",
           }}
         >
           <span
